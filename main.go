@@ -45,10 +45,16 @@ func main() {
 		EnvVar: "AUTH",
 	})
 	esIndex := app.String(cli.StringOpt{
-		Name:   "elasticsearch-index",
+		Name:   "elasticsearch-index-alias",
 		Value:  "concepts",
-		Desc:   "Elasticsearch index",
-		EnvVar: "ELASTICSEARCH_INDEX",
+		Desc:   "Elasticsearch index alias",
+		EnvVar: "ELASTICSEARCH_INDEX_ALIAS",
+	})
+	mappingFile := app.String(cli.StringOpt{
+		Name:   "mapping-file",
+		Value:  "./mapping.json",
+		Desc:   "Mapping file",
+		EnvVar: "MAPPING_FILE",
 	})
 	esTraceLogging := app.Bool(cli.BoolOpt{
 		Name:   "elasticsearch-trace",
@@ -82,7 +88,7 @@ func main() {
 			}
 		}()
 
-		esService := service.NewEsService(ecc, *esIndex)
+		esService := service.NewEsService(ecc, *esIndex, *mappingFile)
 		routeRequest(port, esService)
 	}
 

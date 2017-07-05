@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"sync"
 
@@ -17,17 +18,15 @@ const (
 )
 
 var (
+	ErrNoIndexVersion  error = errors.New("No index version has been specified")
 	ErrNoElasticClient error = errors.New("No ElasticSearch client available")
+	ErrInvalidAlias    error = errors.New("ElasticSearch alias configuration is invalid for update")
+
+	indexVersion = ""
 )
 
-type esService struct {
-	sync.RWMutex
-	elasticClient *elastic.Client
-	indexName     string
-}
-
 type EsService interface {
-	ReadData(conceptType string, uuid string) (*elastic.GetResult, error)
+	MigrateIndex(aliasName string, mappingFile string) error
 }
 
 type EsHealthService interface {
@@ -36,8 +35,15 @@ type EsHealthService interface {
 	ClusterIsHealthyCheck() fthealth.Check
 }
 
-func NewEsService(ch chan *elastic.Client, indexName string) *esService {
-	es := &esService{indexName: indexName}
+type esService struct {
+	sync.RWMutex
+	elasticClient *elastic.Client
+	aliasName     string
+	mappingFile   string
+}
+
+func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string) *esService {
+	es := &esService{aliasName: aliasName, mappingFile: mappingFile}
 	go func() {
 		for ec := range ch {
 			es.setElasticClient(ec)
@@ -53,7 +59,7 @@ func (es *esService) setElasticClient(ec *elastic.Client) {
 	es.elasticClient = ec
 	log.Info("injected ElasticSearch connection")
 
-	go es.MigrateIndex()
+	go es.MigrateIndex(es.aliasName, es.mappingFile)
 }
 
 //GoodToGo returns a 503 if the healthcheck fails - suitable for use from varnish to check availability of a node
@@ -86,27 +92,6 @@ func (service *esService) esClient() *elastic.Client {
 	service.RLock()
 	defer service.RUnlock()
 	return service.elasticClient
-}
-
-func (es *esService) ReadData(conceptType string, uuid string) (*elastic.GetResult, error) {
-	es.RLock()
-	defer es.RUnlock()
-
-	if err := es.checkElasticClient(); err != nil {
-		return nil, err
-	}
-
-	resp, err := es.elasticClient.Get().
-		Index(es.indexName).
-		Type(conceptType).
-		Id(uuid).
-		Do(context.Background())
-
-	if elastic.IsNotFound(err) {
-		return &elastic.GetResult{Found: false}, nil
-	} else {
-		return resp, err
-	}
 }
 
 func (service *esService) ClusterIsHealthyCheck() fthealth.Check {
@@ -157,16 +142,123 @@ func (service *esService) connectivityChecker() (string, error) {
 	return "Successfully connected to the cluster", nil
 }
 
-func (es *esService) MigrateIndex() {
-	log.Infof("Checking alias for %s", es.indexName)
+func (es *esService) MigrateIndex(aliasName string, mappingFile string) error {
+	if len(indexVersion) == 0 {
+		log.Error(ErrNoIndexVersion.Error())
+		return ErrNoIndexVersion
+	}
 
-	log.Infof("Creating new version of index")
+	if err := es.checkElasticClient(); err != nil {
+		return err
+	}
+	client := es.esClient()
+	// TODO check cluster health
 
-	log.Infof("Making current index read-only")
+	requireUpdate, currentIndexName, newIndexName, err := es.checkIndexAliases(client, aliasName)
+	if err != nil {
+		log.WithError(err).Error("unable to read alias definition")
+		return err
+	}
+	if !requireUpdate {
+		log.WithField("index", indexVersion).Info("index is up-to-date")
+		return nil
+	}
 
-	log.Infof("Reindexing")
+	mapping, err := ioutil.ReadFile(mappingFile)
+	if err != nil {
+		log.WithError(err).Error("unable to read new index mapping definition")
+		return err
+	}
 
-	log.Infof("Waiting for reindexing task to complete")
+	err = es.createIndex(client, newIndexName, string(mapping))
+	if err != nil {
+		log.WithError(err).Error("unable to create new index")
+		return err
+	}
 
-	log.Infof("Cutting alias across to new index")
+	err = es.setReadOnly(client, aliasName)
+	if err != nil {
+		log.WithError(err).Error("unable to set index read-only")
+		return err
+	}
+
+	taskId, err := es.reindex(client, aliasName, newIndexName)
+	if err != nil {
+		log.WithError(err).Error("failed to begin reindex")
+		return err
+	}
+
+	// TODO
+	log.Infof("Waiting for reindexing task to complete: %s", taskId)
+
+	err = es.updateAlias(client, aliasName, currentIndexName, newIndexName)
+	if err != nil {
+		log.WithError(err).Error("failed to update alias")
+		return err
+	}
+
+	return nil
+}
+
+func (es *esService) checkIndexAliases(client *elastic.Client, aliasName string) (bool, string, string, error) {
+	aliasesService := elastic.NewAliasesService(client)
+	aliasesResult, err := aliasesService.Do(context.Background())
+	if err != nil {
+		return false, "", "", err
+	}
+
+	aliasedIndices := aliasesResult.IndicesByAlias(aliasName)
+	if len(aliasedIndices) != 1 {
+		log.WithFields(log.Fields{"alias": aliasName, "indices": aliasedIndices}).Error("alias points to multiple indices")
+		return false, "", "", ErrInvalidAlias
+	}
+
+	log.WithFields(log.Fields{"alias": aliasName, "index": aliasedIndices[0]}).Info("current index alias")
+	requiredIndex := fmt.Sprintf("%s-%s", aliasName, indexVersion)
+
+	return !(aliasedIndices[0] == requiredIndex), aliasedIndices[0], requiredIndex, nil
+}
+
+func (es *esService) createIndex(client *elastic.Client, indexName string, indexMapping string) error {
+	log.WithFields(log.Fields{"indexName": indexName, "mapping": indexMapping}).Info("Creating new index")
+
+	indexService := elastic.NewIndicesCreateService(client)
+	_, err := indexService.Index(indexName).BodyString(indexMapping).Do(context.Background())
+
+	return err
+}
+
+func (es *esService) setReadOnly(client *elastic.Client, indexName string) error {
+	log.WithField("index", indexName).Info("Setting to read-only")
+
+	indexService := elastic.NewIndicesPutSettingsService(client)
+	_, err := indexService.Index(indexName).BodyJson(map[string]interface{}{"index.blocks.write": "true"}).Do(context.Background())
+
+	return err
+}
+
+func (es *esService) reindex(client *elastic.Client, fromIndex string, toIndex string) (string, error) {
+	log.WithFields(log.Fields{"from": fromIndex, "to": toIndex}).Info("reindexing")
+
+	indexService := elastic.NewReindexService(client)
+	_, err := indexService.SourceIndex(fromIndex).DestinationIndex(toIndex). /*.WaitForCompletion(false)*/ Do(context.Background())
+
+	if err != nil {
+		return "", err
+	}
+
+	return "", nil
+}
+
+func (es *esService) updateAlias(client *elastic.Client, aliasName string, oldIndexName string, newIndexName string) error {
+	log.WithFields(log.Fields{"alias": aliasName, "from": oldIndexName, "to": newIndexName}).Info("updating index alias")
+
+	aliasService := elastic.NewAliasService(client)
+	if oldIndexName != "" {
+		aliasService = aliasService.Remove(oldIndexName, aliasName)
+	}
+
+	_, err := aliasService.Add(newIndexName, aliasName).Do(context.Background())
+
+	return err
 }
