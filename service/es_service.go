@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"sync"
+	"time"
 
 	fthealth "github.com/Financial-Times/go-fthealth/v1_1"
 	log "github.com/Sirupsen/logrus"
@@ -182,14 +183,29 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string) error {
 		return err
 	}
 
-	taskId, err := es.reindex(client, aliasName, newIndexName)
+	completeCount, err := es.reindex(client, currentIndexName, newIndexName)
 	if err != nil {
 		log.WithError(err).Error("failed to begin reindex")
 		return err
 	}
 
-	// TODO
-	log.Infof("Waiting for reindexing task to complete: %s", taskId)
+	taskErrCount := 0
+	for {
+		finished, err := es.isTaskComplete(client, newIndexName, completeCount)
+		if err != nil {
+			log.WithError(err).Error("failed to obtain reindex task status")
+			taskErrCount++
+			if taskErrCount == 3 {
+				return err
+			}
+		}
+
+		if finished {
+			break
+		}
+
+		time.Sleep(time.Minute)
+	}
 
 	err = es.updateAlias(client, aliasName, currentIndexName, newIndexName)
 	if err != nil {
@@ -197,6 +213,7 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string) error {
 		return err
 	}
 
+	log.WithFields(log.Fields{"from": currentIndexName, "to": newIndexName}).Info("index migration completed")
 	return nil
 }
 
@@ -237,17 +254,25 @@ func (es *esService) setReadOnly(client *elastic.Client, indexName string) error
 	return err
 }
 
-func (es *esService) reindex(client *elastic.Client, fromIndex string, toIndex string) (string, error) {
+func (es *esService) reindex(client *elastic.Client, fromIndex string, toIndex string) (int, error) {
 	log.WithFields(log.Fields{"from": fromIndex, "to": toIndex}).Info("reindexing")
 
 	indexService := elastic.NewReindexService(client)
 	_, err := indexService.SourceIndex(fromIndex).DestinationIndex(toIndex). /*.WaitForCompletion(false)*/ Do(context.Background())
 
 	if err != nil {
-		return "", err
+		return 0, err
 	}
 
-	return "", nil
+	counter := elastic.NewCountService(client)
+	count, err := counter.Index(fromIndex).Do(context.Background())
+	return int(count), err
+}
+
+func (es *esService) isTaskComplete(client *elastic.Client, indexName string, completeCount int) (bool, error) {
+	counter := elastic.NewCountService(client)
+	count, err := counter.Index(indexName).Do(context.Background())
+	return int(count) == completeCount, err
 }
 
 func (es *esService) updateAlias(client *elastic.Client, aliasName string, oldIndexName string, newIndexName string) error {
