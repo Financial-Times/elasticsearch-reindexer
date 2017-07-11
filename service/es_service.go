@@ -232,6 +232,7 @@ func (es *esService) checkIndexAliases(client *elastic.Client, aliasName string)
 
 	log.WithFields(log.Fields{"alias": aliasName, "index": aliasedIndices[0]}).Info("current index alias")
 	requiredIndex := fmt.Sprintf("%s-%s", aliasName, indexVersion)
+	log.WithField("index", requiredIndex).Info("comparing to required index alias")
 
 	return !(aliasedIndices[0] == requiredIndex), aliasedIndices[0], requiredIndex, nil
 }
@@ -257,15 +258,24 @@ func (es *esService) setReadOnly(client *elastic.Client, indexName string) error
 func (es *esService) reindex(client *elastic.Client, fromIndex string, toIndex string) (int, error) {
 	log.WithFields(log.Fields{"from": fromIndex, "to": toIndex}).Info("reindexing")
 
+	counter := elastic.NewCountService(client)
+	count, err := counter.Index(toIndex).Do(context.Background())
+	if err != nil {
+		return 0, err
+	}
+
+	count, err = counter.Index(fromIndex).Do(context.Background())
+	if err != nil {
+		return 0, err
+	}
+
 	indexService := elastic.NewReindexService(client)
-	_, err := indexService.SourceIndex(fromIndex).DestinationIndex(toIndex). /*.WaitForCompletion(false)*/ Do(context.Background())
+	_, err = indexService.SourceIndex(fromIndex).DestinationIndex(toIndex).WaitForCompletion(false).Do(context.Background())
 
 	if err != nil {
 		return 0, err
 	}
 
-	counter := elastic.NewCountService(client)
-	count, err := counter.Index(fromIndex).Do(context.Background())
 	return int(count), err
 }
 

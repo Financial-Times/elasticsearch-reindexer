@@ -41,6 +41,14 @@
 			"revisionTime": "2016-02-12T16:38:35Z"
 		},
 		{
+			"checksumSHA1": "gU6NuiyLFRC+nYkLOwiHEr2FijY=",
+			"path": "github.com/Masterminds/semver",
+			"revision": "abff1900528dbdaf6f3f5aa92c398be1eaf2a9f7",
+			"revisionTime": "2017-05-02T10:47:25Z",
+			"version": "v1.3.0",
+			"versionExact": "v1.3.0"
+		},
+		{
 			"checksumSHA1": "ZCUKm9qDmTTGd+qutKuIdNsMS1Y=",
 			"path": "github.com/Sirupsen/logrus",
 			"revision": "0208149b40d863d2c1a2f8fe5753096a9cf2cc8b",
