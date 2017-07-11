@@ -55,6 +55,12 @@
 			"revisionTime": "2017-02-27T12:44:09Z"
 		},
 		{
+			"checksumSHA1": "X7lvJ+Xs/zF9gbffw2ax9gNY2rs=",
+			"path": "github.com/davecgh/go-spew/spew",
+			"revision": "782f4967f2dc4564575ca782fe2d04090b5faca8",
+			"revisionTime": "2017-06-26T23:16:45Z"
+		},
+		{
 			"checksumSHA1": "KJqRW8jfPoHquMAd6FI7x92JxFs=",
 			"path": "github.com/hashicorp/go-version",
 			"revision": "03c5bf6be031b6dd45afec16b1cf94fc8938bc77",
@@ -142,12 +148,12 @@
 			"versionExact": "v1.1.4"
 		},
 		{
-			"checksumSHA1": "G+lYxyVS81JlxDMPOEy/R6A7bwI=",
+			"checksumSHA1": "kPp8+a3sZyLdnCkBquviZ3xUTsU=",
 			"path": "gopkg.in/olivere/elastic.v5",
-			"revision": "d38422dbe9b19c6cf9c6c9c99b2306bee9fbaf89",
-			"revisionTime": "2017-06-16T11:44:02Z",
-			"version": "v5.0.40",
-			"versionExact": "v5.0.40"
+			"revision": "3113f9b9ad37509fe5f8a0e5e91c96fdc4435e26",
+			"revisionTime": "2017-06-16T13:27:19Z",
+			"version": "v5.0.41",
+			"versionExact": "v5.0.41"
 		},
 		{
 			"checksumSHA1": "x+ZyEkEsXKU47ycfEaegO0lxQpc=",
