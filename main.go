@@ -110,8 +110,6 @@ func logStartupConfig(port, esEndpoint, esAuth, esIndex *string) {
 func routeRequest(port *string, healthService service.EsHealthService) {
 	servicesRouter := vestigo.NewRouter()
 
-	var monitoringRouter http.Handler = servicesRouter
-
 	healthCheck := fthealth.HealthCheck{
 		SystemCode:  "???",
 		Name:        "Elasticsearch Service Healthcheck",
@@ -126,7 +124,7 @@ func routeRequest(port *string, healthService service.EsHealthService) {
 	http.HandleFunc(status.GTGPath, healthService.GoodToGo)
 	http.HandleFunc(status.BuildInfoPath, status.BuildInfoHandler)
 
-	http.Handle("/", monitoringRouter)
+	http.Handle("/", servicesRouter)
 
 	log.Infof("ElasticSearch reindexer listening on port %v...", *port)
 	if err := http.ListenAndServe(":"+*port, nil); err != nil {

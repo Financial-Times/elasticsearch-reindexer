@@ -184,7 +184,7 @@ func (s *EsServiceCheckIndexAliasTestSuite) TestCheckIndexAliasesNotFound() {
 
 	requireUpdate, _, _, err := s.service.checkIndexAliases(s.ec, "test-missing")
 
-	assert.EqualError(s.T(), err, ErrInvalidAlias.Error(), "expected no error for checking index")
+	assert.EqualError(s.T(), err, ErrInvalidAlias.Error(), "expected error for checking index")
 	assert.False(s.T(), requireUpdate, "expected no update required")
 }
 
