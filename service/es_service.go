@@ -177,34 +177,36 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string) error {
 		return err
 	}
 
-	err = es.setReadOnly(client, aliasName)
-	if err != nil {
-		log.WithError(err).Error("unable to set index read-only")
-		return err
-	}
-
-	completeCount, err := es.reindex(client, currentIndexName, newIndexName)
-	if err != nil {
-		log.WithError(err).Error("failed to begin reindex")
-		return err
-	}
-
-	taskErrCount := 0
-	for {
-		finished, err := es.isTaskComplete(client, newIndexName, completeCount)
+	if len(currentIndexName) > 0 {
+		err = es.setReadOnly(client, currentIndexName)
 		if err != nil {
-			log.WithError(err).Error("failed to obtain reindex task status")
-			taskErrCount++
-			if taskErrCount == 3 {
-				return err
+			log.WithError(err).Error("unable to set index read-only")
+			return err
+		}
+
+		completeCount, err := es.reindex(client, currentIndexName, newIndexName)
+		if err != nil {
+			log.WithError(err).Error("failed to begin reindex")
+			return err
+		}
+
+		taskErrCount := 0
+		for {
+			finished, err := es.isTaskComplete(client, newIndexName, completeCount)
+			if err != nil {
+				log.WithError(err).Error("failed to obtain reindex task status")
+				taskErrCount++
+				if taskErrCount == 3 {
+					return err
+				}
 			}
-		}
 
-		if finished {
-			break
-		}
+			if finished {
+				break
+			}
 
-		time.Sleep(time.Minute)
+			time.Sleep(time.Minute)
+		}
 	}
 
 	err = es.updateAlias(client, aliasName, currentIndexName, newIndexName)
@@ -225,16 +227,24 @@ func (es *esService) checkIndexAliases(client *elastic.Client, aliasName string)
 	}
 
 	aliasedIndices := aliasesResult.IndicesByAlias(aliasName)
-	if len(aliasedIndices) != 1 {
+	switch len(aliasedIndices) {
+	case 0:
+		log.WithField("alias", aliasName).Info("no current index alias")
+		requiredIndex := fmt.Sprintf("%s-%s", aliasName, indexVersion)
+
+		return true, "", requiredIndex, nil
+
+	case 1:
+		log.WithFields(log.Fields{"alias": aliasName, "index": aliasedIndices[0]}).Info("current index alias")
+		requiredIndex := fmt.Sprintf("%s-%s", aliasName, indexVersion)
+		log.WithField("index", requiredIndex).Info("comparing to required index alias")
+
+		return !(aliasedIndices[0] == requiredIndex), aliasedIndices[0], requiredIndex, nil
+
+	default:
 		log.WithFields(log.Fields{"alias": aliasName, "indices": aliasedIndices}).Error("alias points to multiple indices")
 		return false, "", "", ErrInvalidAlias
 	}
-
-	log.WithFields(log.Fields{"alias": aliasName, "index": aliasedIndices[0]}).Info("current index alias")
-	requiredIndex := fmt.Sprintf("%s-%s", aliasName, indexVersion)
-	log.WithField("index", requiredIndex).Info("comparing to required index alias")
-
-	return !(aliasedIndices[0] == requiredIndex), aliasedIndices[0], requiredIndex, nil
 }
 
 func (es *esService) createIndex(client *elastic.Client, indexName string, indexMapping string) error {
@@ -289,7 +299,7 @@ func (es *esService) updateAlias(client *elastic.Client, aliasName string, oldIn
 	log.WithFields(log.Fields{"alias": aliasName, "from": oldIndexName, "to": newIndexName}).Info("updating index alias")
 
 	aliasService := elastic.NewAliasService(client)
-	if oldIndexName != "" {
+	if len(oldIndexName) > 0 {
 		aliasService = aliasService.Remove(oldIndexName, aliasName)
 	}
 
