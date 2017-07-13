@@ -49,6 +49,7 @@ func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string)
 	go func() {
 		for ec := range ch {
 			es.setElasticClient(ec)
+			es.MigrateIndex(es.aliasName, es.mappingFile)
 		}
 	}()
 	return es
@@ -60,8 +61,6 @@ func (es *esService) setElasticClient(ec *elastic.Client) {
 
 	es.elasticClient = ec
 	log.Info("injected ElasticSearch connection")
-
-	go es.MigrateIndex(es.aliasName, es.mappingFile)
 }
 
 //GoodToGo returns a 503 if the healthcheck fails - suitable for use from varnish to check availability of a node
