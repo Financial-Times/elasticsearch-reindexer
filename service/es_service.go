@@ -38,13 +38,14 @@ type EsHealthService interface {
 
 type esService struct {
 	sync.RWMutex
-	elasticClient *elastic.Client
-	aliasName     string
-	mappingFile   string
+	elasticClient       *elastic.Client
+	aliasName           string
+	mappingFile         string
+	pollReindexInterval time.Duration
 }
 
 func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string) *esService {
-	es := &esService{aliasName: aliasName, mappingFile: mappingFile}
+	es := &esService{aliasName: aliasName, mappingFile: mappingFile, pollReindexInterval: time.Minute}
 	go func() {
 		for ec := range ch {
 			es.setElasticClient(ec)
@@ -149,11 +150,12 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string) error {
 		return ErrNoIndexVersion
 	}
 
-	if err := es.checkElasticClient(); err != nil {
+	if _, err := es.healthChecker(); err != nil {
+		log.WithError(err).Error("cluster is not healthy")
 		return err
 	}
+
 	client := es.esClient()
-	// TODO check cluster health
 
 	requireUpdate, currentIndexName, newIndexName, err := es.checkIndexAliases(client, aliasName)
 	if err != nil {
@@ -205,7 +207,7 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string) error {
 				break
 			}
 
-			time.Sleep(time.Minute)
+			time.Sleep(es.pollReindexInterval)
 		}
 	}
 
