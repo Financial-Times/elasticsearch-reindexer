@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -93,14 +94,14 @@ func writeTestConcepts(ec *elastic.Client, indexName string, esConceptType strin
 	}
 
 	// ensure test data is immediately available from the index
-	_, err := ec.Refresh(testIndexName).Do(context.Background())
+	_, err := ec.Refresh(indexName).Do(context.Background())
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-type EsServiceCheckIndexAliasTestSuite struct {
+type EsServiceTestSuite struct {
 	suite.Suite
 	esURL     string
 	ec        *elastic.Client
@@ -108,11 +109,11 @@ type EsServiceCheckIndexAliasTestSuite struct {
 	service   esService
 }
 
-func TestEsServiceCheckIndexAliasSuite(t *testing.T) {
-	suite.Run(t, new(EsServiceCheckIndexAliasTestSuite))
+func TestEsServiceSuite(t *testing.T) {
+	suite.Run(t, new(EsServiceTestSuite))
 }
 
-func (s *EsServiceCheckIndexAliasTestSuite) SetupSuite() {
+func (s *EsServiceTestSuite) SetupSuite() {
 	oldVersion := semver.MustParse(testIndexVersion)
 	testOldIndexName = fmt.Sprintf("%s-%s", testIndexName, oldVersion.String())
 	requiredVersion := oldVersion.IncPatch()
@@ -129,7 +130,12 @@ func (s *EsServiceCheckIndexAliasTestSuite) SetupSuite() {
 	s.ec = ec
 }
 
-func (s *EsServiceCheckIndexAliasTestSuite) SetupTest() {
+func (s *EsServiceTestSuite) TearDownSuite() {
+	_, err := s.ec.IndexPutSettings().BodyJson(map[string]interface{}{"index.number_of_replicas": 0}).Do(context.Background())
+	require.NoError(s.T(), err, "expected no error in modifying replica settings")
+}
+
+func (s *EsServiceTestSuite) SetupTest() {
 	s.indexName = testOldIndexName
 
 	s.ec.Alias().Remove(testOldIndexName, testIndexName).Do(context.Background())
@@ -140,25 +146,25 @@ func (s *EsServiceCheckIndexAliasTestSuite) SetupTest() {
 	err := createIndex(s.ec, testOldIndexName, testOldMappingFile)
 	require.NoError(s.T(), err, "expected no error in creating index")
 
-	err = createAlias(s.ec, testIndexName, testOldIndexName)
-	require.NoError(s.T(), err, "expected no error in creating index alias")
-
 	err = writeTestConcepts(s.ec, testOldIndexName, esTopicType, ftTopicType, size)
 	require.NoError(s.T(), err, "expected no error in adding topics")
 }
 
-func forCurrentIndexVersion() {
-	indexVersion = testIndexVersion
+func (s *EsServiceTestSuite) forCurrentIndexVersion() {
+	s.service.indexVersion = testIndexVersion
 }
 
-func forNextIndexVersion() {
+func (s *EsServiceTestSuite) forNextIndexVersion() {
 	oldVersion := semver.MustParse(testIndexVersion)
 	requiredVersion := oldVersion.IncPatch()
-	indexVersion = requiredVersion.String()
+	s.service.indexVersion = requiredVersion.String()
 }
 
-func (s *EsServiceCheckIndexAliasTestSuite) TestCheckIndexAliasesMatch() {
-	forCurrentIndexVersion()
+func (s *EsServiceTestSuite) TestCheckIndexAliasesMatch() {
+	s.forCurrentIndexVersion()
+
+	err := createAlias(s.ec, testIndexName, testOldIndexName)
+	require.NoError(s.T(), err, "expected no error in creating index alias")
 
 	requireUpdate, current, required, err := s.service.checkIndexAliases(s.ec, testIndexName)
 
@@ -168,8 +174,11 @@ func (s *EsServiceCheckIndexAliasTestSuite) TestCheckIndexAliasesMatch() {
 	assert.Equal(s.T(), testOldIndexName, required, "required index")
 }
 
-func (s *EsServiceCheckIndexAliasTestSuite) TestCheckIndexAliasesDoNotMatch() {
-	forNextIndexVersion()
+func (s *EsServiceTestSuite) TestCheckIndexAliasesDoNotMatch() {
+	s.forNextIndexVersion()
+
+	err := createAlias(s.ec, testIndexName, testOldIndexName)
+	require.NoError(s.T(), err, "expected no error in creating index alias")
 
 	requireUpdate, current, required, err := s.service.checkIndexAliases(s.ec, testIndexName)
 
@@ -179,17 +188,19 @@ func (s *EsServiceCheckIndexAliasTestSuite) TestCheckIndexAliasesDoNotMatch() {
 	assert.Equal(s.T(), testNewIndexName, required, "required index")
 }
 
-func (s *EsServiceCheckIndexAliasTestSuite) TestCheckIndexAliasesNotFound() {
-	forCurrentIndexVersion()
+func (s *EsServiceTestSuite) TestCheckIndexAliasesNotFound() {
+	s.forCurrentIndexVersion()
 
-	requireUpdate, _, _, err := s.service.checkIndexAliases(s.ec, "test-missing")
+	requireUpdate, currentIndexName, newIndexName, err := s.service.checkIndexAliases(s.ec, testIndexName)
 
-	assert.EqualError(s.T(), err, ErrInvalidAlias.Error(), "expected no error for checking index")
-	assert.False(s.T(), requireUpdate, "expected no update required")
+	assert.NoError(s.T(), err, "expected no error for checking index")
+	assert.True(s.T(), requireUpdate, "expected no update required")
+	assert.Len(s.T(), currentIndexName, 0, "current index name should be empty")
+	assert.Equal(s.T(), testOldIndexName, newIndexName, "required index")
 }
 
-func (s *EsServiceCheckIndexAliasTestSuite) TestCreateIndex() {
-	forNextIndexVersion()
+func (s *EsServiceTestSuite) TestCreateIndex() {
+	s.forNextIndexVersion()
 	indexMapping, err := ioutil.ReadFile(testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for reading index mapping file")
 
@@ -202,8 +213,8 @@ func (s *EsServiceCheckIndexAliasTestSuite) TestCreateIndex() {
 	assert.True(s.T(), hasMentionsCompletionMapping(mapping), "new index should have mentionsCompletion in its mappings")
 }
 
-func (s *EsServiceCheckIndexAliasTestSuite) TestCreateIndexFailure() {
-	forNextIndexVersion()
+func (s *EsServiceTestSuite) TestCreateIndexFailure() {
+	s.forNextIndexVersion()
 	indexMapping, err := ioutil.ReadFile(testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for reading index mapping file")
 
@@ -216,8 +227,8 @@ func (s *EsServiceCheckIndexAliasTestSuite) TestCreateIndexFailure() {
 	assert.False(s.T(), hasMentionsCompletionMapping(oldMapping), "old index should not have mentionsCompletion in its mappings")
 }
 
-func (s *EsServiceCheckIndexAliasTestSuite) TestSetReadOnly() {
-	forCurrentIndexVersion()
+func (s *EsServiceTestSuite) TestSetReadOnly() {
+	s.forCurrentIndexVersion()
 
 	err := s.service.setReadOnly(s.ec, testOldIndexName)
 	assert.NoError(s.T(), err, "expected no error for setting index read-only")
@@ -233,8 +244,8 @@ func (s *EsServiceCheckIndexAliasTestSuite) TestSetReadOnly() {
 	assert.True(s.T(), readOnly, "index should be read-only")
 }
 
-func (s *EsServiceCheckIndexAliasTestSuite) TestSetReadOnlyFailure() {
-	forCurrentIndexVersion()
+func (s *EsServiceTestSuite) TestSetReadOnlyFailure() {
+	s.forCurrentIndexVersion()
 
 	err := s.service.setReadOnly(s.ec, testNewIndexName)
 	assert.Error(s.T(), err, "expected error for setting index read-only")
@@ -252,8 +263,8 @@ func (s *EsServiceCheckIndexAliasTestSuite) TestSetReadOnlyFailure() {
 	}
 }
 
-func (s *EsServiceCheckIndexAliasTestSuite) TestReindexAndWait() {
-	forNextIndexVersion()
+func (s *EsServiceTestSuite) TestReindexAndWait() {
+	s.forNextIndexVersion()
 	err := createIndex(s.ec, testNewIndexName, testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for creating new index")
 
@@ -277,8 +288,8 @@ func (s *EsServiceCheckIndexAliasTestSuite) TestReindexAndWait() {
 	assert.Equal(s.T(), size, int(actual), "expected new index to contain same number of documents as original index")
 }
 
-func (s *EsServiceCheckIndexAliasTestSuite) TestReindexFailure() {
-	forNextIndexVersion()
+func (s *EsServiceTestSuite) TestReindexFailure() {
+	s.forNextIndexVersion()
 
 	count, err := s.service.reindex(s.ec, testOldIndexName, testNewIndexName)
 	assert.Error(s.T(), err, "expected error for starting reindex")
@@ -286,10 +297,13 @@ func (s *EsServiceCheckIndexAliasTestSuite) TestReindexFailure() {
 	assert.Equal(s.T(), 0, count, "index size")
 }
 
-func (s *EsServiceCheckIndexAliasTestSuite) TestUpdateAlias() {
-	forNextIndexVersion()
+func (s *EsServiceTestSuite) TestUpdateAlias() {
+	s.forNextIndexVersion()
 	err := createIndex(s.ec, testNewIndexName, testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for creating new index")
+
+	err = createAlias(s.ec, testIndexName, testOldIndexName)
+	require.NoError(s.T(), err, "expected no error in creating index alias")
 
 	err = s.service.updateAlias(s.ec, testIndexName, testOldIndexName, testNewIndexName)
 	assert.NoError(s.T(), err, "expected no error for updating alias")
@@ -302,10 +316,29 @@ func (s *EsServiceCheckIndexAliasTestSuite) TestUpdateAlias() {
 	assert.Equal(s.T(), testNewIndexName, actual[0], "updated alias")
 }
 
-func (s *EsServiceCheckIndexAliasTestSuite) TestUpdateAliasFailure() {
-	forNextIndexVersion()
+func (s *EsServiceTestSuite) TestUpdateAliasNoIndexToRemove() {
+	s.forNextIndexVersion()
+	err := createIndex(s.ec, testNewIndexName, testNewMappingFile)
+	require.NoError(s.T(), err, "expected no error for creating new index")
 
-	err := s.service.updateAlias(s.ec, testIndexName, testOldIndexName, testNewIndexName)
+	err = s.service.updateAlias(s.ec, testIndexName, "", testNewIndexName)
+	assert.NoError(s.T(), err, "expected no error for updating alias")
+
+	aliases, err := s.ec.Aliases().Do(context.Background())
+	assert.NoError(s.T(), err, "expected no error for retrieving aliases")
+
+	actual := aliases.IndicesByAlias(testIndexName)
+	assert.Len(s.T(), actual, 1, "aliases")
+	assert.Equal(s.T(), testNewIndexName, actual[0], "updated alias")
+}
+
+func (s *EsServiceTestSuite) TestUpdateAliasFailure() {
+	s.forNextIndexVersion()
+
+	err := createAlias(s.ec, testIndexName, testOldIndexName)
+	require.NoError(s.T(), err, "expected no error in creating index alias")
+
+	err = s.service.updateAlias(s.ec, testIndexName, testOldIndexName, testNewIndexName)
 	assert.Error(s.T(), err, "expected error for updating alias")
 	assert.Regexp(s.T(), "no such index", err.Error(), "error message")
 
@@ -315,6 +348,80 @@ func (s *EsServiceCheckIndexAliasTestSuite) TestUpdateAliasFailure() {
 	actual := aliases.IndicesByAlias(testIndexName)
 	assert.Len(s.T(), actual, 1, "aliases")
 	assert.Equal(s.T(), testOldIndexName, actual[0], "unmodified alias")
+}
+
+func (s *EsServiceTestSuite) TestMigrateIndex() {
+	s.forNextIndexVersion()
+
+	_, err := s.ec.IndexPutSettings().BodyJson(map[string]interface{}{"index.number_of_replicas": 0}).Do(context.Background())
+	require.NoError(s.T(), err, "expected no error in modifying replica settings")
+
+	err = createAlias(s.ec, testIndexName, testOldIndexName)
+	require.NoError(s.T(), err, "expected no error in creating index alias")
+
+	s.service.elasticClient = s.ec
+	s.service.pollReindexInterval = time.Second
+	err = s.service.MigrateIndex(testIndexName, testNewMappingFile)
+
+	assert.NoError(s.T(), err, "expected no error for migrating index in unhealthy ES cluster")
+
+	aliases, err := s.ec.Aliases().Do(context.Background())
+	assert.NoError(s.T(), err, "expected no error for retrieving aliases")
+
+	actual := aliases.IndicesByAlias(testIndexName)
+	assert.Len(s.T(), actual, 1, "aliases")
+	assert.Equal(s.T(), testNewIndexName, actual[0], "updated alias")
+}
+
+func (s *EsServiceTestSuite) TestMigrateIndexClusterUnhealthy() {
+	s.forNextIndexVersion()
+
+	err := createAlias(s.ec, testIndexName, testOldIndexName)
+	require.NoError(s.T(), err, "expected no error in creating index alias")
+
+	s.service.elasticClient = s.ec
+	err = s.service.MigrateIndex(testIndexName, testNewMappingFile)
+
+	assert.Error(s.T(), err, "expected error for migrating index in unhealthy ES cluster")
+	assert.EqualError(s.T(), err, "Cluster is yellow", "error message")
+
+	aliases, err := s.ec.Aliases().Do(context.Background())
+	assert.NoError(s.T(), err, "expected no error for retrieving aliases")
+
+	actual := aliases.IndicesByAlias(testIndexName)
+	assert.Len(s.T(), actual, 1, "aliases")
+	assert.Equal(s.T(), testOldIndexName, actual[0], "unmodified alias")
+}
+
+func (s *EsServiceTestSuite) TestMappingsCheckerInProgress() {
+	s.forNextIndexVersion()
+
+	msg, err := s.service.mappingsChecker()
+	assert.Regexp(s.T(), s.service.indexVersion, msg, "healthcheck message")
+	assert.NoError(s.T(), err, "expected no error")
+}
+
+func (s *EsServiceTestSuite) TestMappingsCheckerHealthy() {
+	s.forNextIndexVersion()
+
+	s.service.migrationCheck = true
+	s.service.migrationErr = nil
+
+	msg, err := s.service.mappingsChecker()
+	assert.Regexp(s.T(), s.service.indexVersion, msg, "healthcheck message")
+	assert.NoError(s.T(), err, "expected no error")
+}
+
+func (s *EsServiceTestSuite) TestMappingsCheckerUnhealthy() {
+	s.forNextIndexVersion()
+
+	expectedError := errors.New("test error")
+	s.service.migrationCheck = true
+	s.service.migrationErr = expectedError
+
+	msg, err := s.service.mappingsChecker()
+	assert.Equal(s.T(), "Elasticsearch mappings were not migrated successfully", msg, "healthcheck message")
+	assert.EqualError(s.T(), err, expectedError.Error(), "expected error")
 }
 
 func hasMentionsCompletionMapping(mapping map[string]interface{}) bool {

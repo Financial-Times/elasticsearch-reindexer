@@ -14,16 +14,10 @@ import (
 	"gopkg.in/olivere/elastic.v5"
 )
 
-const (
-	deweyUrl = "https://dewey.ft.com/TODO.html"
-)
-
 var (
 	ErrNoIndexVersion  error = errors.New("No index version has been specified")
 	ErrNoElasticClient error = errors.New("No ElasticSearch client available")
 	ErrInvalidAlias    error = errors.New("ElasticSearch alias configuration is invalid for update")
-
-	indexVersion = ""
 )
 
 type EsService interface {
@@ -34,20 +28,28 @@ type EsHealthService interface {
 	GoodToGo(writer http.ResponseWriter, req *http.Request)
 	ConnectivityHealthyCheck() fthealth.Check
 	ClusterIsHealthyCheck() fthealth.Check
+	IndexMappingsCheck() fthealth.Check
 }
 
 type esService struct {
 	sync.RWMutex
-	elasticClient *elastic.Client
-	aliasName     string
-	mappingFile   string
+	elasticClient       *elastic.Client
+	aliasName           string
+	mappingFile         string
+	indexVersion        string
+	pollReindexInterval time.Duration
+	migrationCheck      bool
+	migrationErr        error
+	panicGuideUrl       string
 }
 
-func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string) *esService {
-	es := &esService{aliasName: aliasName, mappingFile: mappingFile}
+func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string, indexVersion string, panicGuideUrl string) *esService {
+	es := &esService{aliasName: aliasName, mappingFile: mappingFile, indexVersion: indexVersion, pollReindexInterval: time.Minute, panicGuideUrl: panicGuideUrl}
 	go func() {
 		for ec := range ch {
 			es.setElasticClient(ec)
+			es.migrationErr = es.MigrateIndex(es.aliasName, es.mappingFile)
+			es.migrationCheck = true
 		}
 	}()
 	return es
@@ -59,8 +61,6 @@ func (es *esService) setElasticClient(ec *elastic.Client) {
 
 	es.elasticClient = ec
 	log.Info("injected ElasticSearch connection")
-
-	go es.MigrateIndex(es.aliasName, es.mappingFile)
 }
 
 //GoodToGo returns a 503 if the healthcheck fails - suitable for use from varnish to check availability of a node
@@ -99,7 +99,7 @@ func (service *esService) ClusterIsHealthyCheck() fthealth.Check {
 	return fthealth.Check{
 		BusinessImpact:   "Full or partial degradation in serving requests from Elasticsearch",
 		Name:             "Check Elasticsearch cluster health",
-		PanicGuide:       deweyUrl,
+		PanicGuide:       service.panicGuideUrl,
 		Severity:         1,
 		TechnicalSummary: "Elasticsearch cluster is not healthy.",
 		Checker:          service.healthChecker,
@@ -124,7 +124,7 @@ func (service *esService) ConnectivityHealthyCheck() fthealth.Check {
 	return fthealth.Check{
 		BusinessImpact:   "Could not connect to Elasticsearch",
 		Name:             "Check connectivity to the Elasticsearch cluster",
-		PanicGuide:       deweyUrl,
+		PanicGuide:       service.panicGuideUrl,
 		Severity:         1,
 		TechnicalSummary: "Connection to Elasticsearch cluster could not be created. Please check your AWS credentials.",
 		Checker:          service.connectivityChecker,
@@ -143,17 +143,41 @@ func (service *esService) connectivityChecker() (string, error) {
 	return "Successfully connected to the cluster", nil
 }
 
+func (service *esService) IndexMappingsCheck() fthealth.Check {
+	return fthealth.Check{
+		BusinessImpact:   "Search results may not be as expected for the data set.",
+		Name:             "Check Elasticsearch mappings version",
+		PanicGuide:       service.panicGuideUrl,
+		Severity:         2,
+		TechnicalSummary: "Elasticsearch mappings may not have been migrated.",
+		Checker:          service.mappingsChecker,
+	}
+}
+
+func (service *esService) mappingsChecker() (string, error) {
+	if service.migrationErr != nil {
+		return "Elasticsearch mappings were not migrated successfully", service.migrationErr
+	}
+
+	if !service.migrationCheck {
+		return "Elasticsearch mappings migration is in progress", fmt.Errorf("Elasticsearch mappings migration to version %s is in progress", service.indexVersion)
+	}
+
+	return fmt.Sprintf("Elasticsearch mappings are at version %s", service.indexVersion), nil
+}
+
 func (es *esService) MigrateIndex(aliasName string, mappingFile string) error {
-	if len(indexVersion) == 0 {
+	if len(es.indexVersion) == 0 {
 		log.Error(ErrNoIndexVersion.Error())
 		return ErrNoIndexVersion
 	}
 
-	if err := es.checkElasticClient(); err != nil {
+	if _, err := es.healthChecker(); err != nil {
+		log.WithError(err).Error("cluster is not healthy")
 		return err
 	}
+
 	client := es.esClient()
-	// TODO check cluster health
 
 	requireUpdate, currentIndexName, newIndexName, err := es.checkIndexAliases(client, aliasName)
 	if err != nil {
@@ -161,7 +185,7 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string) error {
 		return err
 	}
 	if !requireUpdate {
-		log.WithField("index", indexVersion).Info("index is up-to-date")
+		log.WithField("index", es.indexVersion).Info("index is up-to-date")
 		return nil
 	}
 
@@ -177,34 +201,36 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string) error {
 		return err
 	}
 
-	err = es.setReadOnly(client, aliasName)
-	if err != nil {
-		log.WithError(err).Error("unable to set index read-only")
-		return err
-	}
-
-	completeCount, err := es.reindex(client, currentIndexName, newIndexName)
-	if err != nil {
-		log.WithError(err).Error("failed to begin reindex")
-		return err
-	}
-
-	taskErrCount := 0
-	for {
-		finished, err := es.isTaskComplete(client, newIndexName, completeCount)
+	if len(currentIndexName) > 0 {
+		err = es.setReadOnly(client, currentIndexName)
 		if err != nil {
-			log.WithError(err).Error("failed to obtain reindex task status")
-			taskErrCount++
-			if taskErrCount == 3 {
-				return err
+			log.WithError(err).Error("unable to set index read-only")
+			return err
+		}
+
+		completeCount, err := es.reindex(client, currentIndexName, newIndexName)
+		if err != nil {
+			log.WithError(err).Error("failed to begin reindex")
+			return err
+		}
+
+		taskErrCount := 0
+		for {
+			finished, err := es.isTaskComplete(client, newIndexName, completeCount)
+			if err != nil {
+				log.WithError(err).Error("failed to obtain reindex task status")
+				taskErrCount++
+				if taskErrCount == 3 {
+					return err
+				}
 			}
-		}
 
-		if finished {
-			break
-		}
+			if finished {
+				break
+			}
 
-		time.Sleep(time.Minute)
+			time.Sleep(es.pollReindexInterval)
+		}
 	}
 
 	err = es.updateAlias(client, aliasName, currentIndexName, newIndexName)
@@ -225,16 +251,24 @@ func (es *esService) checkIndexAliases(client *elastic.Client, aliasName string)
 	}
 
 	aliasedIndices := aliasesResult.IndicesByAlias(aliasName)
-	if len(aliasedIndices) != 1 {
+	switch len(aliasedIndices) {
+	case 0:
+		log.WithField("alias", aliasName).Info("no current index alias")
+		requiredIndex := fmt.Sprintf("%s-%s", aliasName, es.indexVersion)
+
+		return true, "", requiredIndex, nil
+
+	case 1:
+		log.WithFields(log.Fields{"alias": aliasName, "index": aliasedIndices[0]}).Info("current index alias")
+		requiredIndex := fmt.Sprintf("%s-%s", aliasName, es.indexVersion)
+		log.WithField("index", requiredIndex).Info("comparing to required index alias")
+
+		return !(aliasedIndices[0] == requiredIndex), aliasedIndices[0], requiredIndex, nil
+
+	default:
 		log.WithFields(log.Fields{"alias": aliasName, "indices": aliasedIndices}).Error("alias points to multiple indices")
 		return false, "", "", ErrInvalidAlias
 	}
-
-	log.WithFields(log.Fields{"alias": aliasName, "index": aliasedIndices[0]}).Info("current index alias")
-	requiredIndex := fmt.Sprintf("%s-%s", aliasName, indexVersion)
-	log.WithField("index", requiredIndex).Info("comparing to required index alias")
-
-	return !(aliasedIndices[0] == requiredIndex), aliasedIndices[0], requiredIndex, nil
 }
 
 func (es *esService) createIndex(client *elastic.Client, indexName string, indexMapping string) error {
@@ -289,7 +323,7 @@ func (es *esService) updateAlias(client *elastic.Client, aliasName string, oldIn
 	log.WithFields(log.Fields{"alias": aliasName, "from": oldIndexName, "to": newIndexName}).Info("updating index alias")
 
 	aliasService := elastic.NewAliasService(client)
-	if oldIndexName != "" {
+	if len(oldIndexName) > 0 {
 		aliasService = aliasService.Remove(oldIndexName, aliasName)
 	}
 
