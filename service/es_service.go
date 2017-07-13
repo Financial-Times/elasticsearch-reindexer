@@ -14,10 +14,6 @@ import (
 	"gopkg.in/olivere/elastic.v5"
 )
 
-const (
-	deweyUrl = "https://dewey.ft.com/TODO.html"
-)
-
 var (
 	ErrNoIndexVersion  error = errors.New("No index version has been specified")
 	ErrNoElasticClient error = errors.New("No ElasticSearch client available")
@@ -32,6 +28,7 @@ type EsHealthService interface {
 	GoodToGo(writer http.ResponseWriter, req *http.Request)
 	ConnectivityHealthyCheck() fthealth.Check
 	ClusterIsHealthyCheck() fthealth.Check
+	IndexMappingsCheck() fthealth.Check
 }
 
 type esService struct {
@@ -41,14 +38,18 @@ type esService struct {
 	mappingFile         string
 	indexVersion        string
 	pollReindexInterval time.Duration
+	migrationCheck      bool
+	migrationErr        error
+	panicGuideUrl       string
 }
 
-func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string, indexVersion string) *esService {
-	es := &esService{aliasName: aliasName, mappingFile: mappingFile, indexVersion: indexVersion, pollReindexInterval: time.Minute}
+func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string, indexVersion string, panicGuideUrl string) *esService {
+	es := &esService{aliasName: aliasName, mappingFile: mappingFile, indexVersion: indexVersion, pollReindexInterval: time.Minute, panicGuideUrl: panicGuideUrl}
 	go func() {
 		for ec := range ch {
 			es.setElasticClient(ec)
-			es.MigrateIndex(es.aliasName, es.mappingFile)
+			es.migrationErr = es.MigrateIndex(es.aliasName, es.mappingFile)
+			es.migrationCheck = true
 		}
 	}()
 	return es
@@ -98,7 +99,7 @@ func (service *esService) ClusterIsHealthyCheck() fthealth.Check {
 	return fthealth.Check{
 		BusinessImpact:   "Full or partial degradation in serving requests from Elasticsearch",
 		Name:             "Check Elasticsearch cluster health",
-		PanicGuide:       deweyUrl,
+		PanicGuide:       service.panicGuideUrl,
 		Severity:         1,
 		TechnicalSummary: "Elasticsearch cluster is not healthy.",
 		Checker:          service.healthChecker,
@@ -123,7 +124,7 @@ func (service *esService) ConnectivityHealthyCheck() fthealth.Check {
 	return fthealth.Check{
 		BusinessImpact:   "Could not connect to Elasticsearch",
 		Name:             "Check connectivity to the Elasticsearch cluster",
-		PanicGuide:       deweyUrl,
+		PanicGuide:       service.panicGuideUrl,
 		Severity:         1,
 		TechnicalSummary: "Connection to Elasticsearch cluster could not be created. Please check your AWS credentials.",
 		Checker:          service.connectivityChecker,
@@ -140,6 +141,29 @@ func (service *esService) connectivityChecker() (string, error) {
 		return "Could not connect to elasticsearch", err
 	}
 	return "Successfully connected to the cluster", nil
+}
+
+func (service *esService) IndexMappingsCheck() fthealth.Check {
+	return fthealth.Check{
+		BusinessImpact:   "Search results may not be as expected for the data set.",
+		Name:             "Check Elasticsearch mappings version",
+		PanicGuide:       service.panicGuideUrl,
+		Severity:         2,
+		TechnicalSummary: "Elasticsearch mappings may not have been migrated.",
+		Checker:          service.mappingsChecker,
+	}
+}
+
+func (service *esService) mappingsChecker() (string, error) {
+	if service.migrationErr != nil {
+		return "Elasticsearch mappings were not migrated successfully", service.migrationErr
+	}
+
+	if !service.migrationCheck {
+		return "Elasticsearch mappings migration is in progress", fmt.Errorf("Elasticsearch mappings migration to version %s is in progress", service.indexVersion)
+	}
+
+	return fmt.Sprintf("Elasticsearch mappings are at version %s", service.indexVersion), nil
 }
 
 func (es *esService) MigrateIndex(aliasName string, mappingFile string) error {

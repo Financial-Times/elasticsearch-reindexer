@@ -68,6 +68,18 @@ func main() {
 		Desc:   "Whether to log ElasticSearch HTTP requests and responses",
 		EnvVar: "ELASTICSEARCH_TRACE",
 	})
+	systemCode := app.String(cli.StringOpt{
+		Name:   "system-code",
+		Value:  "NO-SYSTEM-CODE",
+		Desc:   "System code",
+		EnvVar: "SYSTEM_CODE",
+	})
+	panicGuideUrl := app.String(cli.StringOpt{
+		Name:   "panic-guide-url",
+		Value:  "https://dewey.ft.com/TODO.html",
+		Desc:   "Panic Guide URL",
+		EnvVar: "PANIC_GUIDE_URL",
+	})
 
 	log.SetLevel(log.InfoLevel)
 
@@ -94,8 +106,8 @@ func main() {
 			}
 		}()
 
-		esService := service.NewEsService(ecc, *esIndex, *mappingFile, *mappingVersion)
-		routeRequest(port, esService)
+		esService := service.NewEsService(ecc, *esIndex, *mappingFile, *mappingVersion, *panicGuideUrl)
+		routeRequest(port, esService, *systemCode)
 	}
 
 	err := app.Run(os.Args)
@@ -113,16 +125,17 @@ func logStartupConfig(port, esEndpoint, esAuth, esIndex *string) {
 	log.Infof("elasticsearch-index: %v", *esIndex)
 }
 
-func routeRequest(port *string, healthService service.EsHealthService) {
+func routeRequest(port *string, healthService service.EsHealthService, systemCode string) {
 	servicesRouter := vestigo.NewRouter()
 
 	healthCheck := fthealth.HealthCheck{
-		SystemCode:  "???",
+		SystemCode:  systemCode,
 		Name:        "Elasticsearch Service Healthcheck",
 		Description: "Checks for ES",
 		Checks: []fthealth.Check{
 			healthService.ConnectivityHealthyCheck(),
 			healthService.ClusterIsHealthyCheck(),
+			healthService.IndexMappingsCheck(),
 		},
 	}
 	http.HandleFunc("/__health", fthealth.Handler(healthCheck))

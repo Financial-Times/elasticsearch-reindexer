@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -390,6 +391,37 @@ func (s *EsServiceTestSuite) TestMigrateIndexClusterUnhealthy() {
 	actual := aliases.IndicesByAlias(testIndexName)
 	assert.Len(s.T(), actual, 1, "aliases")
 	assert.Equal(s.T(), testOldIndexName, actual[0], "unmodified alias")
+}
+
+func (s *EsServiceTestSuite) TestMappingsCheckerInProgress() {
+	s.forNextIndexVersion()
+
+	msg, err := s.service.mappingsChecker()
+	assert.Regexp(s.T(), s.service.indexVersion, msg, "healthcheck message")
+	assert.NoError(s.T(), err, "expected no error")
+}
+
+func (s *EsServiceTestSuite) TestMappingsCheckerHealthy() {
+	s.forNextIndexVersion()
+
+	s.service.migrationCheck = true
+	s.service.migrationErr = nil
+
+	msg, err := s.service.mappingsChecker()
+	assert.Regexp(s.T(), s.service.indexVersion, msg, "healthcheck message")
+	assert.NoError(s.T(), err, "expected no error")
+}
+
+func (s *EsServiceTestSuite) TestMappingsCheckerUnhealthy() {
+	s.forNextIndexVersion()
+
+	expectedError := errors.New("test error")
+	s.service.migrationCheck = true
+	s.service.migrationErr = expectedError
+
+	msg, err := s.service.mappingsChecker()
+	assert.Equal(s.T(), "Elasticsearch mappings were not migrated successfully", msg, "healthcheck message")
+	assert.EqualError(s.T(), err, expectedError.Error(), "expected error")
 }
 
 func hasMentionsCompletionMapping(mapping map[string]interface{}) bool {
