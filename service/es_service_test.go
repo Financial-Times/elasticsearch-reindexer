@@ -149,18 +149,18 @@ func (s *EsServiceTestSuite) SetupTest() {
 	require.NoError(s.T(), err, "expected no error in adding topics")
 }
 
-func forCurrentIndexVersion() {
-	indexVersion = testIndexVersion
+func (s *EsServiceTestSuite) forCurrentIndexVersion() {
+	s.service.indexVersion = testIndexVersion
 }
 
-func forNextIndexVersion() {
+func (s *EsServiceTestSuite) forNextIndexVersion() {
 	oldVersion := semver.MustParse(testIndexVersion)
 	requiredVersion := oldVersion.IncPatch()
-	indexVersion = requiredVersion.String()
+	s.service.indexVersion = requiredVersion.String()
 }
 
 func (s *EsServiceTestSuite) TestCheckIndexAliasesMatch() {
-	forCurrentIndexVersion()
+	s.forCurrentIndexVersion()
 
 	err := createAlias(s.ec, testIndexName, testOldIndexName)
 	require.NoError(s.T(), err, "expected no error in creating index alias")
@@ -174,7 +174,7 @@ func (s *EsServiceTestSuite) TestCheckIndexAliasesMatch() {
 }
 
 func (s *EsServiceTestSuite) TestCheckIndexAliasesDoNotMatch() {
-	forNextIndexVersion()
+	s.forNextIndexVersion()
 
 	err := createAlias(s.ec, testIndexName, testOldIndexName)
 	require.NoError(s.T(), err, "expected no error in creating index alias")
@@ -188,7 +188,7 @@ func (s *EsServiceTestSuite) TestCheckIndexAliasesDoNotMatch() {
 }
 
 func (s *EsServiceTestSuite) TestCheckIndexAliasesNotFound() {
-	forCurrentIndexVersion()
+	s.forCurrentIndexVersion()
 
 	requireUpdate, currentIndexName, newIndexName, err := s.service.checkIndexAliases(s.ec, testIndexName)
 
@@ -199,7 +199,7 @@ func (s *EsServiceTestSuite) TestCheckIndexAliasesNotFound() {
 }
 
 func (s *EsServiceTestSuite) TestCreateIndex() {
-	forNextIndexVersion()
+	s.forNextIndexVersion()
 	indexMapping, err := ioutil.ReadFile(testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for reading index mapping file")
 
@@ -213,7 +213,7 @@ func (s *EsServiceTestSuite) TestCreateIndex() {
 }
 
 func (s *EsServiceTestSuite) TestCreateIndexFailure() {
-	forNextIndexVersion()
+	s.forNextIndexVersion()
 	indexMapping, err := ioutil.ReadFile(testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for reading index mapping file")
 
@@ -227,7 +227,7 @@ func (s *EsServiceTestSuite) TestCreateIndexFailure() {
 }
 
 func (s *EsServiceTestSuite) TestSetReadOnly() {
-	forCurrentIndexVersion()
+	s.forCurrentIndexVersion()
 
 	err := s.service.setReadOnly(s.ec, testOldIndexName)
 	assert.NoError(s.T(), err, "expected no error for setting index read-only")
@@ -244,7 +244,7 @@ func (s *EsServiceTestSuite) TestSetReadOnly() {
 }
 
 func (s *EsServiceTestSuite) TestSetReadOnlyFailure() {
-	forCurrentIndexVersion()
+	s.forCurrentIndexVersion()
 
 	err := s.service.setReadOnly(s.ec, testNewIndexName)
 	assert.Error(s.T(), err, "expected error for setting index read-only")
@@ -263,7 +263,7 @@ func (s *EsServiceTestSuite) TestSetReadOnlyFailure() {
 }
 
 func (s *EsServiceTestSuite) TestReindexAndWait() {
-	forNextIndexVersion()
+	s.forNextIndexVersion()
 	err := createIndex(s.ec, testNewIndexName, testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for creating new index")
 
@@ -288,7 +288,7 @@ func (s *EsServiceTestSuite) TestReindexAndWait() {
 }
 
 func (s *EsServiceTestSuite) TestReindexFailure() {
-	forNextIndexVersion()
+	s.forNextIndexVersion()
 
 	count, err := s.service.reindex(s.ec, testOldIndexName, testNewIndexName)
 	assert.Error(s.T(), err, "expected error for starting reindex")
@@ -297,7 +297,7 @@ func (s *EsServiceTestSuite) TestReindexFailure() {
 }
 
 func (s *EsServiceTestSuite) TestUpdateAlias() {
-	forNextIndexVersion()
+	s.forNextIndexVersion()
 	err := createIndex(s.ec, testNewIndexName, testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for creating new index")
 
@@ -316,7 +316,7 @@ func (s *EsServiceTestSuite) TestUpdateAlias() {
 }
 
 func (s *EsServiceTestSuite) TestUpdateAliasNoIndexToRemove() {
-	forNextIndexVersion()
+	s.forNextIndexVersion()
 	err := createIndex(s.ec, testNewIndexName, testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for creating new index")
 
@@ -332,7 +332,7 @@ func (s *EsServiceTestSuite) TestUpdateAliasNoIndexToRemove() {
 }
 
 func (s *EsServiceTestSuite) TestUpdateAliasFailure() {
-	forNextIndexVersion()
+	s.forNextIndexVersion()
 
 	err := createAlias(s.ec, testIndexName, testOldIndexName)
 	require.NoError(s.T(), err, "expected no error in creating index alias")
@@ -350,7 +350,7 @@ func (s *EsServiceTestSuite) TestUpdateAliasFailure() {
 }
 
 func (s *EsServiceTestSuite) TestMigrateIndex() {
-	forNextIndexVersion()
+	s.forNextIndexVersion()
 
 	_, err := s.ec.IndexPutSettings().BodyJson(map[string]interface{}{"index.number_of_replicas": 0}).Do(context.Background())
 	require.NoError(s.T(), err, "expected no error in modifying replica settings")
@@ -373,7 +373,7 @@ func (s *EsServiceTestSuite) TestMigrateIndex() {
 }
 
 func (s *EsServiceTestSuite) TestMigrateIndexClusterUnhealthy() {
-	forNextIndexVersion()
+	s.forNextIndexVersion()
 
 	err := createAlias(s.ec, testIndexName, testOldIndexName)
 	require.NoError(s.T(), err, "expected no error in creating index alias")

@@ -22,8 +22,6 @@ var (
 	ErrNoIndexVersion  error = errors.New("No index version has been specified")
 	ErrNoElasticClient error = errors.New("No ElasticSearch client available")
 	ErrInvalidAlias    error = errors.New("ElasticSearch alias configuration is invalid for update")
-
-	indexVersion = ""
 )
 
 type EsService interface {
@@ -41,11 +39,12 @@ type esService struct {
 	elasticClient       *elastic.Client
 	aliasName           string
 	mappingFile         string
+	indexVersion        string
 	pollReindexInterval time.Duration
 }
 
-func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string) *esService {
-	es := &esService{aliasName: aliasName, mappingFile: mappingFile, pollReindexInterval: time.Minute}
+func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string, indexVersion string) *esService {
+	es := &esService{aliasName: aliasName, mappingFile: mappingFile, indexVersion: indexVersion, pollReindexInterval: time.Minute}
 	go func() {
 		for ec := range ch {
 			es.setElasticClient(ec)
@@ -144,7 +143,7 @@ func (service *esService) connectivityChecker() (string, error) {
 }
 
 func (es *esService) MigrateIndex(aliasName string, mappingFile string) error {
-	if len(indexVersion) == 0 {
+	if len(es.indexVersion) == 0 {
 		log.Error(ErrNoIndexVersion.Error())
 		return ErrNoIndexVersion
 	}
@@ -162,7 +161,7 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string) error {
 		return err
 	}
 	if !requireUpdate {
-		log.WithField("index", indexVersion).Info("index is up-to-date")
+		log.WithField("index", es.indexVersion).Info("index is up-to-date")
 		return nil
 	}
 
@@ -231,13 +230,13 @@ func (es *esService) checkIndexAliases(client *elastic.Client, aliasName string)
 	switch len(aliasedIndices) {
 	case 0:
 		log.WithField("alias", aliasName).Info("no current index alias")
-		requiredIndex := fmt.Sprintf("%s-%s", aliasName, indexVersion)
+		requiredIndex := fmt.Sprintf("%s-%s", aliasName, es.indexVersion)
 
 		return true, "", requiredIndex, nil
 
 	case 1:
 		log.WithFields(log.Fields{"alias": aliasName, "index": aliasedIndices[0]}).Info("current index alias")
-		requiredIndex := fmt.Sprintf("%s-%s", aliasName, indexVersion)
+		requiredIndex := fmt.Sprintf("%s-%s", aliasName, es.indexVersion)
 		log.WithField("index", requiredIndex).Info("comparing to required index alias")
 
 		return !(aliasedIndices[0] == requiredIndex), aliasedIndices[0], requiredIndex, nil

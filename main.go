@@ -50,6 +50,12 @@ func main() {
 		Desc:   "Elasticsearch index alias",
 		EnvVar: "ELASTICSEARCH_INDEX_ALIAS",
 	})
+	mappingVersion := app.String(cli.StringOpt{
+		Name:   "mapping-version",
+		Value:  "",
+		Desc:   "Mapping file / index version",
+		EnvVar: "INDEX_VERSION",
+	})
 	mappingFile := app.String(cli.StringOpt{
 		Name:   "mapping-file",
 		Value:  "./mapping.json",
@@ -88,7 +94,7 @@ func main() {
 			}
 		}()
 
-		esService := service.NewEsService(ecc, *esIndex, *mappingFile)
+		esService := service.NewEsService(ecc, *esIndex, *mappingFile, *mappingVersion)
 		routeRequest(port, esService)
 	}
 
