@@ -38,13 +38,14 @@ type esService struct {
 	mappingFile         string
 	indexVersion        string
 	pollReindexInterval time.Duration
+	progress            string
 	migrationCheck      bool
 	migrationErr        error
 	panicGuideUrl       string
 }
 
 func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string, indexVersion string, panicGuideUrl string) *esService {
-	es := &esService{aliasName: aliasName, mappingFile: mappingFile, indexVersion: indexVersion, pollReindexInterval: time.Minute, panicGuideUrl: panicGuideUrl}
+	es := &esService{aliasName: aliasName, mappingFile: mappingFile, indexVersion: indexVersion, pollReindexInterval: time.Minute, progress: "not started", panicGuideUrl: panicGuideUrl}
 	go func() {
 		for ec := range ch {
 			es.setElasticClient(ec)
@@ -160,7 +161,8 @@ func (service *esService) mappingsChecker() (string, error) {
 	}
 
 	if !service.migrationCheck {
-		return "Elasticsearch mappings migration is in progress", fmt.Errorf("Elasticsearch mappings migration to version %s is in progress", service.indexVersion)
+		msg := fmt.Sprintf("Elasticsearch mappings migration to version %s is in progress (%s)", service.indexVersion, service.progress)
+		return msg, errors.New(msg)
 	}
 
 	return fmt.Sprintf("Elasticsearch mappings are at version %s", service.indexVersion), nil
@@ -177,6 +179,7 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string) error {
 		return err
 	}
 
+	es.progress = "starting"
 	client := es.esClient()
 
 	requireUpdate, currentIndexName, newIndexName, err := es.checkIndexAliases(client, aliasName)
@@ -216,7 +219,8 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string) error {
 
 		taskErrCount := 0
 		for {
-			finished, err := es.isTaskComplete(client, newIndexName, completeCount)
+			finished, done, err := es.isTaskComplete(client, newIndexName, completeCount)
+			es.progress = fmt.Sprintf("%v / %v documents reindexed", done, completeCount)
 			if err != nil {
 				log.WithError(err).Error("failed to obtain reindex task status")
 				taskErrCount++
@@ -314,10 +318,10 @@ func (es *esService) reindex(client *elastic.Client, fromIndex string, toIndex s
 	return int(count), err
 }
 
-func (es *esService) isTaskComplete(client *elastic.Client, indexName string, completeCount int) (bool, error) {
+func (es *esService) isTaskComplete(client *elastic.Client, indexName string, completeCount int) (bool, int, error) {
 	counter := elastic.NewCountService(client)
 	count, err := counter.Index(indexName).Do(context.Background())
-	return int(count) == completeCount, err
+	return int(count) == completeCount, int(count), err
 }
 
 func (es *esService) updateAlias(client *elastic.Client, aliasName string, oldIndexName string, newIndexName string) error {
