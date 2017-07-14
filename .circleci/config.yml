@@ -1,0 +1,48 @@
+version: 2
+jobs:
+  build:
+    working_directory: /go/src/github.com/Financial-Times/elasticsearch-reindexer
+    docker:
+      - image: golang:1.7.3
+        environment:
+          GOPATH: /go
+          ELASTICSEARCH_TEST_URL: http://localhost:9200
+      - image:  elasticsearch:5.1
+    steps:
+      - checkout
+      - run:
+          name: External Dependencies
+          command: |
+            go get github.com/mattn/goveralls
+            go get -u github.com/jstemmer/go-junit-report
+            go get -u github.com/kardianos/govendor
+      - run:
+          name: Test Results
+          command: |
+            mkdir -p /tmp/test-results
+            mkdir -p /tmp/coverage-results
+      - run:
+          name: Govendor Sync
+          command: govendor sync -v
+      - run:
+          name: Go Build
+          command: go build -v
+      - run:
+          name: Run Tests
+          command: |
+            go test -v -cover -race -coverprofile=/tmp/coverage-results/coverage.out .
+            go list ./... | grep -v vendor | awk -F/ '{print $4}' | xargs -I {} go test -v -cover -race -coverprofile=/tmp/coverage-results/coverage_{}.out ./{}
+            mkdir -p /tmp/test-results/
+            go test -v -race . | /go/bin/go-junit-report > /tmp/test-results/main.xml
+            go list ./... | grep -v vendor | awk -F/ '{print $4}' | xargs -I {} go test -v -race ./{} | /go/bin/go-junit-report > /tmp/test-results/{}.xml
+      - run:
+          name: Combine Coverage Results
+          command: |
+            sed -i '1d' /tmp/coverage-results/*.out
+            echo "mode: atomic" > /tmp/coverage-results/overall-coverage.result
+            cat /tmp/coverage-results/*.out >> /tmp/coverage-results/overall-coverage.result
+      - run:
+          name: Upload Coverage
+          command: /go/bin/goveralls -coverprofile=/tmp/coverage-results/overall-coverage.result -service=circle-ci -repotoken=$COVERALLS_TOKEN
+      - store_test_results:
+          path: /tmp/test-results
