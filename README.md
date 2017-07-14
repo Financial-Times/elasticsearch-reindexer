@@ -6,3 +6,4 @@ The tool assumes that the index is behind an alias, and that the current index c
 
 ## Using the base Docker container
 The `Dockerfile` in this project builds an intermediate container with an `ONBUILD` instruction, which will complete the build process when a child container uses this image in a `FROM` instruction. Such a project requires at least one git commit in its repository, and a file `mapping.json` in its root directory.
+
