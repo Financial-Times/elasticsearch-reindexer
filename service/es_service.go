@@ -298,6 +298,7 @@ func (es *esService) reindex(client *elastic.Client, fromIndex string, toIndex s
 		return 0, err
 	}
 
+	counter = elastic.NewCountService(client)
 	count, err = counter.Index(fromIndex).Do(context.Background())
 	if err != nil {
 		return 0, err
