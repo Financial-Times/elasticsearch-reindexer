@@ -136,6 +136,7 @@ func (s *EsServiceTestSuite) TearDownSuite() {
 }
 
 func (s *EsServiceTestSuite) SetupTest() {
+	s.service = esService{}
 	s.indexName = testOldIndexName
 
 	s.ec.Alias().Remove(testOldIndexName, testIndexName).Do(context.Background())
@@ -295,17 +296,20 @@ func (s *EsServiceTestSuite) TestReindexAndWait() {
 	count, err := s.service.reindex(s.ec, testOldIndexName, testNewIndexName)
 	assert.NoError(s.T(), err, "expected no error for starting reindex")
 
-	complete, err := s.service.isTaskComplete(s.ec, testNewIndexName, count)
+	complete, done, err := s.service.isTaskComplete(s.ec, testNewIndexName, count)
 	assert.NoError(s.T(), err, "expected no error for monitoring task completion")
 	assert.Equal(s.T(), size, count, "index size")
 
 	if !complete {
+		assert.True(s.T(), done < count, "not all documents have been reindexed yet")
+
 		// 100 documents may not reindex immediately but should only take a few seconds
 		time.Sleep(5 * time.Second)
-		complete, err := s.service.isTaskComplete(s.ec, testNewIndexName, count)
+		complete, done, err = s.service.isTaskComplete(s.ec, testNewIndexName, count)
 		assert.NoError(s.T(), err, "expected no error for monitoring task completion")
 		assert.True(s.T(), complete, "expected reindex to be complete")
 	}
+	assert.Equal(s.T(), size, done, "all documents have been reindexed")
 
 	actual, err := s.ec.Count(testNewIndexName).Do(context.Background())
 	assert.NoError(s.T(), err, "expected no error for checking index size")
@@ -419,10 +423,13 @@ func (s *EsServiceTestSuite) TestMigrateIndexClusterUnhealthy() {
 
 func (s *EsServiceTestSuite) TestMappingsCheckerInProgress() {
 	s.forNextIndexVersion()
+	progress := "some progress"
+	s.service.progress = progress
 
 	msg, err := s.service.mappingsChecker()
-	assert.Regexp(s.T(), s.service.indexVersion, msg, "healthcheck message")
-	assert.NoError(s.T(), err, "expected no error")
+	assert.Contains(s.T(), msg, s.service.indexVersion, "healthcheck message")
+	assert.Contains(s.T(), msg, progress, "healthcheck message")
+	assert.Error(s.T(), err, "expected an unhealthy response")
 }
 
 func (s *EsServiceTestSuite) TestMappingsCheckerHealthy() {
