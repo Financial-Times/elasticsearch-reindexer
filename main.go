@@ -81,6 +81,7 @@ func main() {
 		EnvVar: "PANIC_GUIDE_URL",
 	})
 
+	log.SetFormatter(&log.JSONFormatter{})
 	log.SetLevel(log.InfoLevel)
 
 	app.Action = func() {
