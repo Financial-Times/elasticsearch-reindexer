@@ -199,6 +199,30 @@ func (s *EsServiceTestSuite) TestCheckIndexAliasesNotFound() {
 	assert.Equal(s.T(), testOldIndexName, newIndexName, "required index")
 }
 
+func (s *EsServiceTestSuite) TestCheckIndexAliasesMultiple() {
+	s.forCurrentIndexVersion()
+
+	err := createAlias(s.ec, testIndexName, testOldIndexName)
+	require.NoError(s.T(), err, "expected no error in creating index alias")
+
+	err = createIndex(s.ec, testNewIndexName, testNewMappingFile)
+	require.NoError(s.T(), err, "expected no error in creating index")
+
+	err = createAlias(s.ec, testIndexName, testNewIndexName)
+	require.NoError(s.T(), err, "expected no error in creating index alias")
+
+	requireUpdate, currentIndexName, newIndexName, err := s.service.checkIndexAliases(s.ec, testIndexName)
+
+	assert.Error(s.T(), err, "expected an error for checking index")
+	assert.Contains(s.T(), err.Error(), fmt.Sprintf("alias %s points to multiple indices", testIndexName), "error message")
+	assert.Contains(s.T(), err.Error(), testOldIndexName, "error message")
+	assert.Contains(s.T(), err.Error(), testNewIndexName, "error message")
+
+	assert.False(s.T(), requireUpdate, "expected no update required")
+	assert.Empty(s.T(), currentIndexName, "current index name should be empty")
+	assert.Empty(s.T(), newIndexName, "required index name should be empty")
+}
+
 func (s *EsServiceTestSuite) TestCreateIndex() {
 	s.forNextIndexVersion()
 	indexMapping, err := ioutil.ReadFile(testNewMappingFile)

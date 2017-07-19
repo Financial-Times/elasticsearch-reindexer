@@ -17,7 +17,6 @@ import (
 var (
 	ErrNoIndexVersion  error = errors.New("No index version has been specified")
 	ErrNoElasticClient error = errors.New("No ElasticSearch client available")
-	ErrInvalidAlias    error = errors.New("ElasticSearch alias configuration is invalid for update")
 )
 
 type EsService interface {
@@ -266,8 +265,7 @@ func (es *esService) checkIndexAliases(client *elastic.Client, aliasName string)
 		return !(aliasedIndices[0] == requiredIndex), aliasedIndices[0], requiredIndex, nil
 
 	default:
-		log.WithFields(log.Fields{"alias": aliasName, "indices": aliasedIndices}).Error("alias points to multiple indices")
-		return false, "", "", ErrInvalidAlias
+		return false, "", "", fmt.Errorf("alias %s points to multiple indices: %v", aliasName, aliasedIndices)
 	}
 }
 
