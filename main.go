@@ -62,6 +62,12 @@ func main() {
 		Desc:   "Mapping file",
 		EnvVar: "MAPPING_FILE",
 	})
+	aliasFilterFile := app.String(cli.StringOpt{
+		Name:   "alias-filter-file",
+		Value:  "./alias-filter.json",
+		Desc:   "An optional filter query to apply to the alias",
+		EnvVar: "ALIAS_FILTER_FILE",
+	})
 	esTraceLogging := app.Bool(cli.BoolOpt{
 		Name:   "elasticsearch-trace",
 		Value:  false,
@@ -107,7 +113,7 @@ func main() {
 			}
 		}()
 
-		esService := service.NewEsService(ecc, *esIndex, *mappingFile, *mappingVersion, *panicGuideUrl)
+		esService := service.NewEsService(ecc, *esIndex, *mappingFile, *aliasFilterFile, *mappingVersion, *panicGuideUrl)
 		routeRequest(port, esService, *systemCode)
 	}
 

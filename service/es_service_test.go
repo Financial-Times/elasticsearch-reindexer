@@ -22,14 +22,15 @@ import (
 )
 
 const (
-	apiBaseURL         = "http://test.api.ft.com"
-	testIndexName      = "test-index"
-	testIndexVersion   = "0.0.1"
-	esTopicType        = "topics"
-	ftTopicType        = "http://www.ft.com/ontology/Topic"
-	testOldMappingFile = "test/old-mapping.json"
-	testNewMappingFile = "test/new-mapping.json"
-	size               = 100
+	apiBaseURL          = "http://test.api.ft.com"
+	testIndexName       = "test-index"
+	testIndexVersion    = "0.0.1"
+	esTopicType         = "topics"
+	ftTopicType         = "http://www.ft.com/ontology/Topic"
+	testOldMappingFile  = "test/old-mapping.json"
+	testNewMappingFile  = "test/new-mapping.json"
+	testAliasFilterFile = "test/alias-filter.json"
+	size                = 100
 )
 
 var (
@@ -333,7 +334,7 @@ func (s *EsServiceTestSuite) TestUpdateAlias() {
 	err = createAlias(s.ec, testIndexName, testOldIndexName)
 	require.NoError(s.T(), err, "expected no error in creating index alias")
 
-	err = s.service.updateAlias(s.ec, testIndexName, testOldIndexName, testNewIndexName)
+	err = s.service.updateAlias(s.ec, testIndexName, "", testOldIndexName, testNewIndexName)
 	assert.NoError(s.T(), err, "expected no error for updating alias")
 
 	aliases, err := s.ec.Aliases().Do(context.Background())
@@ -349,7 +350,7 @@ func (s *EsServiceTestSuite) TestUpdateAliasNoIndexToRemove() {
 	err := createIndex(s.ec, testNewIndexName, testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for creating new index")
 
-	err = s.service.updateAlias(s.ec, testIndexName, "", testNewIndexName)
+	err = s.service.updateAlias(s.ec, testIndexName, "", "", testNewIndexName)
 	assert.NoError(s.T(), err, "expected no error for updating alias")
 
 	aliases, err := s.ec.Aliases().Do(context.Background())
@@ -366,7 +367,7 @@ func (s *EsServiceTestSuite) TestUpdateAliasFailure() {
 	err := createAlias(s.ec, testIndexName, testOldIndexName)
 	require.NoError(s.T(), err, "expected no error in creating index alias")
 
-	err = s.service.updateAlias(s.ec, testIndexName, testOldIndexName, testNewIndexName)
+	err = s.service.updateAlias(s.ec, testIndexName, "", testOldIndexName, testNewIndexName)
 	assert.Error(s.T(), err, "expected error for updating alias")
 	assert.Regexp(s.T(), "no such index", err.Error(), "error message")
 
@@ -376,6 +377,28 @@ func (s *EsServiceTestSuite) TestUpdateAliasFailure() {
 	actual := aliases.IndicesByAlias(testIndexName)
 	assert.Len(s.T(), actual, 1, "aliases")
 	assert.Equal(s.T(), testOldIndexName, actual[0], "unmodified alias")
+}
+
+func (s *EsServiceTestSuite) TestUpdateAliasWithFilter() {
+	s.forNextIndexVersion()
+	err := createIndex(s.ec, testNewIndexName, testNewMappingFile)
+	require.NoError(s.T(), err, "expected no error for creating new index")
+
+	err = createAlias(s.ec, testIndexName, testOldIndexName)
+	require.NoError(s.T(), err, "expected no error in creating index alias")
+
+	filter, err := ioutil.ReadFile(testAliasFilterFile)
+	assert.NoError(s.T(), err, "this test case requires a query filter json at '%v'", testAliasFilterFile)
+
+	err = s.service.updateAlias(s.ec, testIndexName, string(filter), testOldIndexName, testNewIndexName)
+	assert.NoError(s.T(), err, "expected no error for updating alias")
+
+	aliases, err := s.ec.Aliases().Do(context.Background())
+	assert.NoError(s.T(), err, "expected no error for retrieving aliases")
+
+	actual := aliases.IndicesByAlias(testIndexName)
+	assert.Len(s.T(), actual, 1, "aliases")
+	assert.Equal(s.T(), testNewIndexName, actual[0], "updated alias")
 }
 
 func (s *EsServiceTestSuite) TestMigrateIndex() {
@@ -389,7 +412,7 @@ func (s *EsServiceTestSuite) TestMigrateIndex() {
 
 	s.service.elasticClient = s.ec
 	s.service.pollReindexInterval = time.Second
-	err = s.service.MigrateIndex(testIndexName, testNewMappingFile)
+	err = s.service.MigrateIndex(testIndexName, testNewMappingFile, testAliasFilterFile)
 
 	assert.NoError(s.T(), err, "expected no error for migrating index in unhealthy ES cluster")
 
@@ -408,7 +431,7 @@ func (s *EsServiceTestSuite) TestMigrateIndexClusterUnhealthy() {
 	require.NoError(s.T(), err, "expected no error in creating index alias")
 
 	s.service.elasticClient = s.ec
-	err = s.service.MigrateIndex(testIndexName, testNewMappingFile)
+	err = s.service.MigrateIndex(testIndexName, testNewMappingFile, testAliasFilterFile)
 
 	assert.Error(s.T(), err, "expected error for migrating index in unhealthy ES cluster")
 	assert.EqualError(s.T(), err, "Cluster is yellow", "error message")
