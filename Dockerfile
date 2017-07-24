@@ -28,7 +28,7 @@ ONBUILD COPY . /index-mapping/
 ONBUILD RUN cd /index-mapping \
   && echo "$(git describe --tag --always 2> /dev/null)" > /mapping.version \
   && cp /index-mapping/mapping.json / \
-  && cp /index-mapping/alias-filter.json / \
+  && if [ -f /index-mapping/alias-filter.json ]; then cp /index-mapping/alias-filter.json / ; fi
   && apk del git \
   && rm -rf /index-mapping
 
