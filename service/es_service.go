@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -238,16 +237,17 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string, aliasFil
 		}
 	}
 
-	aliasFilter, err := ioutil.ReadFile(aliasFilterFile)
-	if os.IsNotExist(err) {
-		log.Info("alias filter file does not exist; no filter will be applied")
-		aliasFilter = []byte{}
-	} else if err != nil {
-		log.WithError(err).Error("unable to read alias filter")
-		return err
+	var aliasFilter string
+	if len(aliasFilterFile) > 0 {
+		aliasFilterBytes, err := ioutil.ReadFile(aliasFilterFile)
+		if err != nil {
+			log.WithError(err).Error("unable to read alias filter")
+			return err
+		}
+		aliasFilter = string(aliasFilterBytes)
 	}
 
-	err = es.updateAlias(client, aliasName, string(aliasFilter), currentIndexName, newIndexName)
+	err = es.updateAlias(client, aliasName, aliasFilter, currentIndexName, newIndexName)
 	if err != nil {
 		log.WithError(err).Error("failed to update alias")
 		return err

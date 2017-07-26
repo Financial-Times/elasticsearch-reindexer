@@ -64,7 +64,7 @@ func main() {
 	})
 	aliasFilterFile := app.String(cli.StringOpt{
 		Name:   "alias-filter-file",
-		Value:  "./alias-filter.json",
+		Value:  "",
 		Desc:   "An optional filter query to apply to the alias",
 		EnvVar: "ALIAS_FILTER_FILE",
 	})

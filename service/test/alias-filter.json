@@ -1,8 +1,5 @@
 {
-   "terms": {
-      "authorities": [
-         "TME",
-         "SmartLogic"
-      ]
+   "prefix": {
+      "aliases.raw": "Test"
    }
 }

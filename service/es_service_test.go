@@ -74,13 +74,18 @@ func writeTestConcepts(ec *elastic.Client, indexName string, esConceptType strin
 	for i := 0; i < amount; i++ {
 		uuid := uuid.NewV4().String()
 
+		aliases := []string{}
+		if i%2 == 0 {
+			aliases = append(aliases, fmt.Sprintf("Test concept %s %v", esConceptType, i))
+		}
+
 		payload := map[string]interface{}{
 			"id":         uuid,
 			"apiUrl":     fmt.Sprintf("%s/%s/%s", apiBaseURL, esConceptType, uuid),
 			"prefLabel":  fmt.Sprintf("Test concept %s %s", esConceptType, uuid),
 			"types":      []string{ftConceptType},
 			"directType": ftConceptType,
-			"aliases":    []string{},
+			"aliases":    aliases,
 		}
 
 		_, err := ec.Index().
@@ -412,6 +417,35 @@ func (s *EsServiceTestSuite) TestMigrateIndex() {
 
 	s.service.elasticClient = s.ec
 	s.service.pollReindexInterval = time.Second
+	err = s.service.MigrateIndex(testIndexName, testNewMappingFile, "")
+
+	assert.NoError(s.T(), err, "expected no error for migrating index in unhealthy ES cluster")
+
+	aliases, err := s.ec.Aliases().Do(context.Background())
+	assert.NoError(s.T(), err, "expected no error for retrieving aliases")
+
+	actual := aliases.IndicesByAlias(testIndexName)
+	assert.Len(s.T(), actual, 1, "aliases")
+	assert.Equal(s.T(), testNewIndexName, actual[0], "updated alias")
+
+	count, err := s.ec.Count(testNewIndexName).Do(context.Background())
+	assert.Equal(s.T(), size, int(count), "new index size")
+
+	count, err = s.ec.Count(testIndexName).Do(context.Background())
+	assert.Equal(s.T(), size, int(count), "aliased index size")
+}
+
+func (s *EsServiceTestSuite) TestMigrateIndexWithAliasFilter() {
+	s.forNextIndexVersion()
+
+	_, err := s.ec.IndexPutSettings().BodyJson(map[string]interface{}{"index.number_of_replicas": 0}).Do(context.Background())
+	require.NoError(s.T(), err, "expected no error in modifying replica settings")
+
+	err = createAlias(s.ec, testIndexName, testOldIndexName)
+	require.NoError(s.T(), err, "expected no error in creating index alias")
+
+	s.service.elasticClient = s.ec
+	s.service.pollReindexInterval = time.Second
 	err = s.service.MigrateIndex(testIndexName, testNewMappingFile, testAliasFilterFile)
 
 	assert.NoError(s.T(), err, "expected no error for migrating index in unhealthy ES cluster")
@@ -422,6 +456,35 @@ func (s *EsServiceTestSuite) TestMigrateIndex() {
 	actual := aliases.IndicesByAlias(testIndexName)
 	assert.Len(s.T(), actual, 1, "aliases")
 	assert.Equal(s.T(), testNewIndexName, actual[0], "updated alias")
+
+	count, err := s.ec.Count(testNewIndexName).Do(context.Background())
+	assert.Equal(s.T(), size, int(count), "new index size")
+
+	count, err = s.ec.Count(testIndexName).Do(context.Background())
+	assert.Equal(s.T(), size/2, int(count), "aliased index size")
+}
+
+func (s *EsServiceTestSuite) TestMigrateIndexWithMissingAliasFilter() {
+	s.forNextIndexVersion()
+
+	_, err := s.ec.IndexPutSettings().BodyJson(map[string]interface{}{"index.number_of_replicas": 0}).Do(context.Background())
+	require.NoError(s.T(), err, "expected no error in modifying replica settings")
+
+	err = createAlias(s.ec, testIndexName, testOldIndexName)
+	require.NoError(s.T(), err, "expected no error in creating index alias")
+
+	s.service.elasticClient = s.ec
+	s.service.pollReindexInterval = time.Second
+	err = s.service.MigrateIndex(testIndexName, testNewMappingFile, "./no-such-file.json")
+
+	assert.Error(s.T(), err, "expected error for migrating index with missing alias filter")
+
+	aliases, err := s.ec.Aliases().Do(context.Background())
+	assert.NoError(s.T(), err, "expected no error for retrieving aliases")
+
+	actual := aliases.IndicesByAlias(testIndexName)
+	assert.Len(s.T(), actual, 1, "aliases")
+	assert.Equal(s.T(), testOldIndexName, actual[0], "unmodified alias")
 }
 
 func (s *EsServiceTestSuite) TestMigrateIndexClusterUnhealthy() {
