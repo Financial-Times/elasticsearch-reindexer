@@ -17,7 +17,6 @@ import (
 var (
 	ErrNoIndexVersion  error = errors.New("No index version has been specified")
 	ErrNoElasticClient error = errors.New("No ElasticSearch client available")
-	ErrInvalidAlias    error = errors.New("ElasticSearch alias configuration is invalid for update")
 )
 
 type EsService interface {
@@ -36,6 +35,7 @@ type esService struct {
 	elasticClient       *elastic.Client
 	aliasName           string
 	mappingFile         string
+	aliasFilterFile     string
 	indexVersion        string
 	pollReindexInterval time.Duration
 	progress            string
@@ -44,12 +44,12 @@ type esService struct {
 	panicGuideUrl       string
 }
 
-func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string, indexVersion string, panicGuideUrl string) *esService {
-	es := &esService{aliasName: aliasName, mappingFile: mappingFile, indexVersion: indexVersion, pollReindexInterval: time.Minute, progress: "not started", panicGuideUrl: panicGuideUrl}
+func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string, aliasFilterFile string, indexVersion string, panicGuideUrl string) *esService {
+	es := &esService{aliasName: aliasName, mappingFile: mappingFile, aliasFilterFile: aliasFilterFile, indexVersion: indexVersion, pollReindexInterval: time.Minute, progress: "not started", panicGuideUrl: panicGuideUrl}
 	go func() {
 		for ec := range ch {
 			es.setElasticClient(ec)
-			es.migrationErr = es.MigrateIndex(es.aliasName, es.mappingFile)
+			es.migrationErr = es.MigrateIndex(es.aliasName, es.mappingFile, es.aliasFilterFile)
 			es.migrationCheck = true
 		}
 	}()
@@ -168,7 +168,7 @@ func (service *esService) mappingsChecker() (string, error) {
 	return fmt.Sprintf("Elasticsearch mappings are at version %s", service.indexVersion), nil
 }
 
-func (es *esService) MigrateIndex(aliasName string, mappingFile string) error {
+func (es *esService) MigrateIndex(aliasName string, mappingFile string, aliasFilterFile string) error {
 	if len(es.indexVersion) == 0 {
 		log.Error(ErrNoIndexVersion.Error())
 		return ErrNoIndexVersion
@@ -237,7 +237,17 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string) error {
 		}
 	}
 
-	err = es.updateAlias(client, aliasName, currentIndexName, newIndexName)
+	var aliasFilter string
+	if len(aliasFilterFile) > 0 {
+		aliasFilterBytes, err := ioutil.ReadFile(aliasFilterFile)
+		if err != nil {
+			log.WithError(err).Error("unable to read alias filter")
+			return err
+		}
+		aliasFilter = string(aliasFilterBytes)
+	}
+
+	err = es.updateAlias(client, aliasName, aliasFilter, currentIndexName, newIndexName)
 	if err != nil {
 		log.WithError(err).Error("failed to update alias")
 		return err
@@ -270,8 +280,7 @@ func (es *esService) checkIndexAliases(client *elastic.Client, aliasName string)
 		return !(aliasedIndices[0] == requiredIndex), aliasedIndices[0], requiredIndex, nil
 
 	default:
-		log.WithFields(log.Fields{"alias": aliasName, "indices": aliasedIndices}).Error("alias points to multiple indices")
-		return false, "", "", ErrInvalidAlias
+		return false, "", "", fmt.Errorf("alias %s points to multiple indices: %v", aliasName, aliasedIndices)
 	}
 }
 
@@ -324,15 +333,21 @@ func (es *esService) isTaskComplete(client *elastic.Client, indexName string, co
 	return int(count) == completeCount, int(count), err
 }
 
-func (es *esService) updateAlias(client *elastic.Client, aliasName string, oldIndexName string, newIndexName string) error {
-	log.WithFields(log.Fields{"alias": aliasName, "from": oldIndexName, "to": newIndexName}).Info("updating index alias")
+func (es *esService) updateAlias(client *elastic.Client, aliasName string, aliasFilter string, oldIndexName string, newIndexName string) error {
+	log.WithFields(log.Fields{"alias": aliasName, "from": oldIndexName, "to": newIndexName, "filter": aliasFilter}).Info("updating index alias")
 
 	aliasService := elastic.NewAliasService(client)
 	if len(oldIndexName) > 0 {
 		aliasService = aliasService.Remove(oldIndexName, aliasName)
 	}
 
-	_, err := aliasService.Add(newIndexName, aliasName).Do(context.Background())
+	if aliasFilter != "" {
+		aliasService = aliasService.AddWithFilter(newIndexName, aliasName, elastic.NewRawStringQuery(aliasFilter))
+	} else {
+		aliasService = aliasService.Add(newIndexName, aliasName)
+	}
+
+	_, err := aliasService.Do(context.Background())
 
 	return err
 }
