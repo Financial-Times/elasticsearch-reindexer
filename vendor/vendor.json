@@ -55,6 +55,12 @@
 			"revisionTime": "2017-02-27T12:44:09Z"
 		},
 		{
+			"checksumSHA1": "w5Mw4n+czNGyLDMkyAr7JP66xtk=",
+			"path": "github.com/Sirupsen/logrus/hooks/test",
+			"revision": "0208149b40d863d2c1a2f8fe5753096a9cf2cc8b",
+			"revisionTime": "2017-02-27T12:44:09Z"
+		},
+		{
 			"checksumSHA1": "X7lvJ+Xs/zF9gbffw2ax9gNY2rs=",
 			"path": "github.com/davecgh/go-spew/spew",
 			"revision": "782f4967f2dc4564575ca782fe2d04090b5faca8",

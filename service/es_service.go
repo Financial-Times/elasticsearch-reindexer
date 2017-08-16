@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"net/http"
 	"sync"
 	"time"
@@ -217,23 +218,10 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string, aliasFil
 			return err
 		}
 
-		taskErrCount := 0
-		for {
-			finished, done, err := es.isTaskComplete(client, newIndexName, completeCount)
-			es.progress = fmt.Sprintf("%v / %v documents reindexed", done, completeCount)
-			if err != nil {
-				log.WithError(err).Error("failed to obtain reindex task status")
-				taskErrCount++
-				if taskErrCount == 3 {
-					return err
-				}
-			}
-
-			if finished {
-				break
-			}
-
-			time.Sleep(es.pollReindexInterval)
+		err = es.waitForCompletion(client, newIndexName, completeCount, math.MaxInt32)
+		if err != nil {
+			log.WithError(err).Error("failed to complete reindex")
+			return err
 		}
 	}
 
@@ -325,6 +313,46 @@ func (es *esService) reindex(client *elastic.Client, fromIndex string, toIndex s
 	}
 
 	return int(count), err
+}
+
+func (es *esService) waitForCompletion(client *elastic.Client, indexName string, completeCount int, maxErrors int) error {
+	taskErrCount := 0
+	history := []int{}
+	for {
+		finished, done, err := es.isTaskComplete(client, indexName, completeCount)
+		es.progress = fmt.Sprintf("%v / %v documents reindexed", done, completeCount)
+		if err != nil {
+			log.WithError(err).Error("failed to obtain reindex task status")
+			taskErrCount++
+			if taskErrCount == maxErrors {
+				return err
+			}
+		}
+
+		if finished {
+			break
+		}
+
+		history = append(history, done)
+		if len(history) > 5 {
+			history = history[1:]
+
+			if history[0] == done {
+				log.WithFields(log.Fields{"index": indexName, "documents": done}).Error("reindexing process may have stalled")
+
+				taskErrCount++
+				if taskErrCount == maxErrors {
+					return fmt.Errorf("reindexing into %s: process may have stalled", indexName)
+				}
+
+				history = []int{done}
+			}
+		}
+
+		time.Sleep(es.pollReindexInterval)
+	}
+
+	return nil
 }
 
 func (es *esService) isTaskComplete(client *elastic.Client, indexName string, completeCount int) (bool, int, error) {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/Masterminds/semver"
 	log "github.com/Sirupsen/logrus"
+	testLog "github.com/Sirupsen/logrus/hooks/test"
 	"github.com/satori/go.uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -320,6 +321,27 @@ func (s *EsServiceTestSuite) TestReindexAndWait() {
 	actual, err := s.ec.Count(testNewIndexName).Do(context.Background())
 	assert.NoError(s.T(), err, "expected no error for checking index size")
 	assert.Equal(s.T(), size, int(actual), "expected new index to contain same number of documents as original index")
+}
+
+func (s *EsServiceTestSuite) TestWaitForCompletionStalled() {
+	s.forNextIndexVersion()
+	hook := testLog.NewGlobal()
+
+	err := createIndex(s.ec, testNewIndexName, testNewMappingFile)
+	require.NoError(s.T(), err, "expected no error for creating new index")
+
+	count, err := s.service.reindex(s.ec, testOldIndexName, testNewIndexName)
+	assert.NoError(s.T(), err, "expected no error for starting reindex")
+
+	_, err = elastic.NewIndicesPutSettingsService(s.ec).Index(testNewIndexName).BodyJson(map[string]interface{}{"index.blocks.write": "true"}).Do(context.Background())
+
+	err = s.service.waitForCompletion(s.ec, testNewIndexName, count, 1)
+	assert.Error(s.T(), err, "expected an error for monitoring task completion")
+	assert.Regexp(s.T(), "process may have stalled", err.Error(), "error message")
+
+	actual := hook.LastEntry()
+	assert.Equal(s.T(), "reindexing process may have stalled", actual.Message, "log message")
+	assert.Equal(s.T(), log.ErrorLevel, actual.Level, "log level")
 }
 
 func (s *EsServiceTestSuite) TestReindexFailure() {
