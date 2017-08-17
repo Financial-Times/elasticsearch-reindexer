@@ -143,7 +143,7 @@ func (s *EsServiceTestSuite) TearDownSuite() {
 }
 
 func (s *EsServiceTestSuite) SetupTest() {
-	s.service = esService{}
+	s.service = esService{pollReindexInterval: time.Second}
 	s.indexName = testOldIndexName
 
 	s.ec.Alias().Remove(testOldIndexName, testIndexName).Do(context.Background())
@@ -265,6 +265,9 @@ func (s *EsServiceTestSuite) TestSetReadOnly() {
 	err := s.service.setReadOnly(s.ec, testOldIndexName)
 	assert.NoError(s.T(), err, "expected no error for setting index read-only")
 
+	err = s.service.waitForReadOnly(s.ec, testOldIndexName, 1)
+	assert.NoError(s.T(), err, "expected no error for waiting for index to be read-only")
+
 	settings, err := s.ec.IndexGetSettings(testOldIndexName).Do(context.Background())
 	assert.NoError(s.T(), err, "expected no error for getting index settings")
 
@@ -282,6 +285,24 @@ func (s *EsServiceTestSuite) TestSetReadOnlyFailure() {
 	err := s.service.setReadOnly(s.ec, testNewIndexName)
 	assert.Error(s.T(), err, "expected error for setting index read-only")
 	assert.Regexp(s.T(), "no such index", err.Error(), "error message")
+
+	settings, err := s.ec.IndexGetSettings(testOldIndexName).Do(context.Background())
+	assert.NoError(s.T(), err, "expected no error for getting index settings")
+
+	if indexBlocksSettings, found := settings[testOldIndexName].Settings["index"].(map[string]interface{})["blocks"]; found {
+		if indexReadOnly, found := indexBlocksSettings.(map[string]interface{})["write"]; found {
+			assert.True(s.T(), found, "index blocks settings should have a write property")
+			readOnly, _ := strconv.ParseBool(indexReadOnly.(string))
+			assert.False(s.T(), readOnly, "index should not be read-only")
+		}
+	}
+}
+
+func (s *EsServiceTestSuite) TestWaitForReadOnlyStalled() {
+	s.forCurrentIndexVersion()
+
+	err := s.service.waitForReadOnly(s.ec, testOldIndexName, 1)
+	assert.Error(s.T(), err, "expected an error waiting for index to be read-only")
 
 	settings, err := s.ec.IndexGetSettings(testOldIndexName).Do(context.Background())
 	assert.NoError(s.T(), err, "expected no error for getting index settings")
@@ -330,10 +351,10 @@ func (s *EsServiceTestSuite) TestWaitForCompletionStalled() {
 	err := createIndex(s.ec, testNewIndexName, testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for creating new index")
 
+	_, err = elastic.NewIndicesPutSettingsService(s.ec).Index(testNewIndexName).BodyJson(map[string]interface{}{"index.blocks.write": "true"}).Do(context.Background())
+
 	count, err := s.service.reindex(s.ec, testOldIndexName, testNewIndexName)
 	assert.NoError(s.T(), err, "expected no error for starting reindex")
-
-	_, err = elastic.NewIndicesPutSettingsService(s.ec).Index(testNewIndexName).BodyJson(map[string]interface{}{"index.blocks.write": "true"}).Do(context.Background())
 
 	err = s.service.waitForCompletion(s.ec, testNewIndexName, count, 1)
 	assert.Error(s.T(), err, "expected an error for monitoring task completion")

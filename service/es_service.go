@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -212,6 +213,12 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string, aliasFil
 			return err
 		}
 
+		err = es.waitForReadOnly(client, currentIndexName, math.MaxInt32)
+		if err != nil {
+			log.WithError(err).Error("failed to set index read-only")
+			return err
+		}
+
 		completeCount, err := es.reindex(client, currentIndexName, newIndexName)
 		if err != nil {
 			log.WithError(err).Error("failed to begin reindex")
@@ -288,6 +295,56 @@ func (es *esService) setReadOnly(client *elastic.Client, indexName string) error
 	_, err := indexService.Index(indexName).BodyJson(map[string]interface{}{"index.blocks.write": "true"}).Do(context.Background())
 
 	return err
+}
+
+func (es *esService) waitForReadOnly(client *elastic.Client, indexName string, maxErrors int) error {
+	taskErrCount := 0
+	for {
+		settings, err := client.IndexGetSettings(indexName).Do(context.Background())
+		if err != nil {
+			log.WithField("index", indexName).WithError(err).Error("failed to obtain index settings")
+			taskErrCount++
+			if taskErrCount == maxErrors {
+				return err
+			}
+		}
+
+		indexBlocksSettings, found := settings[indexName].Settings["index"].(map[string]interface{})["blocks"]
+		if !found {
+			log.WithField("index", indexName).Error("index settings has no blocks")
+			taskErrCount++
+			if taskErrCount == maxErrors {
+				return fmt.Errorf("setting index read-only %s: process may have stalled", indexName)
+			}
+		} else {
+			indexReadOnly, found := indexBlocksSettings.(map[string]interface{})["write"]
+			if !found {
+				log.WithField("index", indexName).Error("index settings has no write blocks")
+				taskErrCount++
+				if taskErrCount == maxErrors {
+					return fmt.Errorf("setting index read-only %s: process may have stalled", indexName)
+				}
+			} else {
+				readOnly, _ := strconv.ParseBool(indexReadOnly.(string))
+				if readOnly {
+					break
+				}
+
+				log.WithField("index", indexName).Error("index is not read-only")
+				taskErrCount++
+				if taskErrCount == maxErrors {
+					return fmt.Errorf("setting index read-only %s: process may have stalled", indexName)
+				}
+			}
+		}
+
+		// retry
+		es.setReadOnly(client, indexName)
+
+		time.Sleep(es.pollReindexInterval)
+	}
+
+	return nil
 }
 
 func (es *esService) reindex(client *elastic.Client, fromIndex string, toIndex string) (int, error) {
