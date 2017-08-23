@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
 	fthealth "github.com/Financial-Times/go-fthealth/v1_1"
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"gopkg.in/olivere/elastic.v5"
 )
 
@@ -20,7 +22,7 @@ var (
 )
 
 type EsService interface {
-	MigrateIndex(aliasName string, mappingFile string) error
+	MigrateIndex(ctx context.Context, aliasName string, mappingFile string) error
 }
 
 type EsHealthService interface {
@@ -44,12 +46,12 @@ type esService struct {
 	panicGuideUrl       string
 }
 
-func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string, aliasFilterFile string, indexVersion string, panicGuideUrl string) *esService {
+func NewEsService(ctx context.Context, ch chan *elastic.Client, aliasName string, mappingFile string, aliasFilterFile string, indexVersion string, panicGuideUrl string) *esService {
 	es := &esService{aliasName: aliasName, mappingFile: mappingFile, aliasFilterFile: aliasFilterFile, indexVersion: indexVersion, pollReindexInterval: time.Minute, progress: "not started", panicGuideUrl: panicGuideUrl}
 	go func() {
 		for ec := range ch {
 			es.setElasticClient(ec)
-			es.migrationErr = es.MigrateIndex(es.aliasName, es.mappingFile, es.aliasFilterFile)
+			es.migrationErr = es.MigrateIndex(ctx, es.aliasName, es.mappingFile, es.aliasFilterFile)
 			es.migrationCheck = true
 		}
 	}()
@@ -168,7 +170,7 @@ func (service *esService) mappingsChecker() (string, error) {
 	return fmt.Sprintf("Elasticsearch mappings are at version %s", service.indexVersion), nil
 }
 
-func (es *esService) MigrateIndex(aliasName string, mappingFile string, aliasFilterFile string) error {
+func (es *esService) MigrateIndex(ctx context.Context, aliasName string, mappingFile string, aliasFilterFile string) error {
 	if len(es.indexVersion) == 0 {
 		log.Error(ErrNoIndexVersion.Error())
 		return ErrNoIndexVersion
@@ -182,7 +184,7 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string, aliasFil
 	es.progress = "starting"
 	client := es.esClient()
 
-	requireUpdate, currentIndexName, newIndexName, err := es.checkIndexAliases(client, aliasName)
+	requireUpdate, currentIndexName, newIndexName, err := es.checkIndexAliases(ctx, client, aliasName)
 	if err != nil {
 		log.WithError(err).Error("unable to read alias definition")
 		return err
@@ -198,42 +200,35 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string, aliasFil
 		return err
 	}
 
-	err = es.createIndex(client, newIndexName, string(mapping))
+	err = es.createIndex(ctx, client, newIndexName, string(mapping))
 	if err != nil {
 		log.WithError(err).Error("unable to create new index")
 		return err
 	}
 
 	if len(currentIndexName) > 0 {
-		err = es.setReadOnly(client, currentIndexName)
+		err = es.setReadOnly(ctx, client, currentIndexName)
 		if err != nil {
 			log.WithError(err).Error("unable to set index read-only")
 			return err
 		}
 
-		completeCount, err := es.reindex(client, currentIndexName, newIndexName)
+		err = es.waitForReadOnly(ctx, client, currentIndexName, math.MaxInt32)
+		if err != nil {
+			log.WithError(err).Error("failed to set index read-only")
+			return err
+		}
+
+		completeCount, err := es.reindex(ctx, client, currentIndexName, newIndexName)
 		if err != nil {
 			log.WithError(err).Error("failed to begin reindex")
 			return err
 		}
 
-		taskErrCount := 0
-		for {
-			finished, done, err := es.isTaskComplete(client, newIndexName, completeCount)
-			es.progress = fmt.Sprintf("%v / %v documents reindexed", done, completeCount)
-			if err != nil {
-				log.WithError(err).Error("failed to obtain reindex task status")
-				taskErrCount++
-				if taskErrCount == 3 {
-					return err
-				}
-			}
-
-			if finished {
-				break
-			}
-
-			time.Sleep(es.pollReindexInterval)
+		err = es.waitForCompletion(ctx, client, newIndexName, completeCount, math.MaxInt32)
+		if err != nil {
+			log.WithError(err).Error("failed to complete reindex")
+			return err
 		}
 	}
 
@@ -247,7 +242,7 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string, aliasFil
 		aliasFilter = string(aliasFilterBytes)
 	}
 
-	err = es.updateAlias(client, aliasName, aliasFilter, currentIndexName, newIndexName)
+	err = es.updateAlias(ctx, client, aliasName, aliasFilter, currentIndexName, newIndexName)
 	if err != nil {
 		log.WithError(err).Error("failed to update alias")
 		return err
@@ -257,9 +252,9 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string, aliasFil
 	return nil
 }
 
-func (es *esService) checkIndexAliases(client *elastic.Client, aliasName string) (bool, string, string, error) {
+func (es *esService) checkIndexAliases(ctx context.Context, client *elastic.Client, aliasName string) (bool, string, string, error) {
 	aliasesService := elastic.NewAliasesService(client)
-	aliasesResult, err := aliasesService.Do(context.Background())
+	aliasesResult, err := aliasesService.Do(ctx)
 	if err != nil {
 		return false, "", "", err
 	}
@@ -284,41 +279,91 @@ func (es *esService) checkIndexAliases(client *elastic.Client, aliasName string)
 	}
 }
 
-func (es *esService) createIndex(client *elastic.Client, indexName string, indexMapping string) error {
+func (es *esService) createIndex(ctx context.Context, client *elastic.Client, indexName string, indexMapping string) error {
 	log.WithFields(log.Fields{"indexName": indexName, "mapping": indexMapping}).Info("Creating new index")
 
 	indexService := elastic.NewIndicesCreateService(client)
-	_, err := indexService.Index(indexName).BodyString(indexMapping).Do(context.Background())
+	_, err := indexService.Index(indexName).BodyString(indexMapping).Do(ctx)
 
 	return err
 }
 
-func (es *esService) setReadOnly(client *elastic.Client, indexName string) error {
+func (es *esService) setReadOnly(ctx context.Context, client *elastic.Client, indexName string) error {
 	log.WithField("index", indexName).Info("Setting to read-only")
 
 	indexService := elastic.NewIndicesPutSettingsService(client)
-	_, err := indexService.Index(indexName).BodyJson(map[string]interface{}{"index.blocks.write": "true"}).Do(context.Background())
+	_, err := indexService.Index(indexName).BodyJson(map[string]interface{}{"index.blocks.write": "true"}).Do(ctx)
 
 	return err
 }
 
-func (es *esService) reindex(client *elastic.Client, fromIndex string, toIndex string) (int, error) {
+func (es *esService) waitForReadOnly(ctx context.Context, client *elastic.Client, indexName string, maxErrors int) error {
+	taskErrCount := 0
+	for {
+		settings, err := client.IndexGetSettings(indexName).Do(ctx)
+		if err != nil {
+			log.WithField("index", indexName).WithError(err).Error("failed to obtain index settings")
+			taskErrCount++
+			if taskErrCount == maxErrors {
+				return err
+			}
+
+			continue
+		}
+
+		indexBlocksSettings, found := settings[indexName].Settings["index"].(map[string]interface{})["blocks"]
+		if !found {
+			log.WithField("index", indexName).Error("index settings has no blocks")
+			taskErrCount++
+			if taskErrCount == maxErrors {
+				return fmt.Errorf("setting index read-only %s: process may have stalled", indexName)
+			}
+		} else {
+			indexReadOnly, found := indexBlocksSettings.(map[string]interface{})["write"]
+			if !found {
+				log.WithField("index", indexName).Error("index settings has no write blocks")
+				taskErrCount++
+				if taskErrCount == maxErrors {
+					return fmt.Errorf("setting index read-only %s: process may have stalled", indexName)
+				}
+			} else {
+				readOnly, _ := strconv.ParseBool(indexReadOnly.(string))
+				if readOnly {
+					return nil
+				}
+
+				log.WithField("index", indexName).Error("index is not read-only")
+				taskErrCount++
+				if taskErrCount == maxErrors {
+					return fmt.Errorf("setting index read-only %s: process may have stalled", indexName)
+				}
+			}
+		}
+
+		// retry
+		es.setReadOnly(ctx, client, indexName)
+
+		time.Sleep(es.pollReindexInterval)
+	}
+}
+
+func (es *esService) reindex(ctx context.Context, client *elastic.Client, fromIndex string, toIndex string) (int, error) {
 	log.WithFields(log.Fields{"from": fromIndex, "to": toIndex}).Info("reindexing")
 
 	counter := elastic.NewCountService(client)
-	count, err := counter.Index(toIndex).Do(context.Background())
+	count, err := counter.Index(toIndex).Do(ctx)
 	if err != nil {
 		return 0, err
 	}
 
 	counter = elastic.NewCountService(client)
-	count, err = counter.Index(fromIndex).Do(context.Background())
+	count, err = counter.Index(fromIndex).Do(ctx)
 	if err != nil {
 		return 0, err
 	}
 
 	indexService := elastic.NewReindexService(client)
-	_, err = indexService.SourceIndex(fromIndex).DestinationIndex(toIndex).WaitForCompletion(false).Do(context.Background())
+	_, err = indexService.SourceIndex(fromIndex).DestinationIndex(toIndex).WaitForCompletion(false).Do(ctx)
 
 	if err != nil {
 		return 0, err
@@ -327,13 +372,53 @@ func (es *esService) reindex(client *elastic.Client, fromIndex string, toIndex s
 	return int(count), err
 }
 
-func (es *esService) isTaskComplete(client *elastic.Client, indexName string, completeCount int) (bool, int, error) {
+func (es *esService) waitForCompletion(ctx context.Context, client *elastic.Client, indexName string, completeCount int, maxErrors int) error {
+	taskErrCount := 0
+	history := []int{}
+	for {
+		finished, done, err := es.isTaskComplete(ctx, client, indexName, completeCount)
+		es.progress = fmt.Sprintf("%v / %v documents reindexed", done, completeCount)
+		if err != nil {
+			log.WithError(err).Error("failed to obtain reindex task status")
+			taskErrCount++
+			if taskErrCount == maxErrors {
+				return err
+			}
+		}
+
+		if finished {
+			break
+		}
+
+		history = append(history, done)
+		if len(history) > 5 {
+			history = history[1:]
+
+			if history[0] == done {
+				log.WithFields(log.Fields{"index": indexName, "documents": done}).Error("reindexing process may have stalled")
+
+				taskErrCount++
+				if taskErrCount == maxErrors {
+					return fmt.Errorf("reindexing into %s: process may have stalled", indexName)
+				}
+
+				history = []int{done}
+			}
+		}
+
+		time.Sleep(es.pollReindexInterval)
+	}
+
+	return nil
+}
+
+func (es *esService) isTaskComplete(ctx context.Context, client *elastic.Client, indexName string, completeCount int) (bool, int, error) {
 	counter := elastic.NewCountService(client)
-	count, err := counter.Index(indexName).Do(context.Background())
+	count, err := counter.Index(indexName).Do(ctx)
 	return int(count) == completeCount, int(count), err
 }
 
-func (es *esService) updateAlias(client *elastic.Client, aliasName string, aliasFilter string, oldIndexName string, newIndexName string) error {
+func (es *esService) updateAlias(ctx context.Context, client *elastic.Client, aliasName string, aliasFilter string, oldIndexName string, newIndexName string) error {
 	log.WithFields(log.Fields{"alias": aliasName, "from": oldIndexName, "to": newIndexName, "filter": aliasFilter}).Info("updating index alias")
 
 	aliasService := elastic.NewAliasService(client)
@@ -347,7 +432,7 @@ func (es *esService) updateAlias(client *elastic.Client, aliasName string, alias
 		aliasService = aliasService.Add(newIndexName, aliasName)
 	}
 
-	_, err := aliasService.Do(context.Background())
+	_, err := aliasService.Do(ctx)
 
 	return err
 }
