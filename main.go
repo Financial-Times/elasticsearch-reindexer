@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"time"
@@ -113,7 +114,7 @@ func main() {
 			}
 		}()
 
-		esService := service.NewEsService(ecc, *esIndex, *mappingFile, *aliasFilterFile, *mappingVersion, *panicGuideUrl)
+		esService := service.NewEsService(context.Background(), ecc, *esIndex, *mappingFile, *aliasFilterFile, *mappingVersion, *panicGuideUrl)
 		routeRequest(port, esService, *systemCode)
 	}
 
