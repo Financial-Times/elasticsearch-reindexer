@@ -307,6 +307,8 @@ func (es *esService) waitForReadOnly(ctx context.Context, client *elastic.Client
 			if taskErrCount == maxErrors {
 				return err
 			}
+
+			continue
 		}
 
 		indexBlocksSettings, found := settings[indexName].Settings["index"].(map[string]interface{})["blocks"]
@@ -327,7 +329,7 @@ func (es *esService) waitForReadOnly(ctx context.Context, client *elastic.Client
 			} else {
 				readOnly, _ := strconv.ParseBool(indexReadOnly.(string))
 				if readOnly {
-					break
+					return nil
 				}
 
 				log.WithField("index", indexName).Error("index is not read-only")
@@ -343,8 +345,6 @@ func (es *esService) waitForReadOnly(ctx context.Context, client *elastic.Client
 
 		time.Sleep(es.pollReindexInterval)
 	}
-
-	return nil
 }
 
 func (es *esService) reindex(ctx context.Context, client *elastic.Client, fromIndex string, toIndex string) (int, error) {
