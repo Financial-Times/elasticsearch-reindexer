@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/Masterminds/semver"
-	log "github.com/Sirupsen/logrus"
-	testLog "github.com/Sirupsen/logrus/hooks/test"
 	"github.com/satori/go.uuid"
+	log "github.com/sirupsen/logrus"
+	testLog "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	fthealth "github.com/Financial-Times/go-fthealth/v1_1"
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"gopkg.in/olivere/elastic.v5"
 )
 

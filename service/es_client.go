@@ -3,7 +3,7 @@ package service
 import (
 	"net/http"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	awsauth "github.com/smartystreets/go-aws-auth"
 	"gopkg.in/olivere/elastic.v5"
 )

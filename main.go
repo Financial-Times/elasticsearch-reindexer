@@ -9,9 +9,9 @@ import (
 	"github.com/Financial-Times/elasticsearch-reindexer/service"
 	fthealth "github.com/Financial-Times/go-fthealth/v1_1"
 	status "github.com/Financial-Times/service-status-go/httphandlers"
-	log "github.com/Sirupsen/logrus"
 	"github.com/husobee/vestigo"
 	"github.com/jawher/mow.cli"
+	log "github.com/sirupsen/logrus"
 	"gopkg.in/olivere/elastic.v5"
 )
 
