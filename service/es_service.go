@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"net/http"
 	"sync"
 	"time"
 
 	fthealth "github.com/Financial-Times/go-fthealth/v1_1"
+	"github.com/Financial-Times/service-status-go/gtg"
 	log "github.com/Sirupsen/logrus"
 	"gopkg.in/olivere/elastic.v5"
 )
@@ -24,7 +24,7 @@ type EsService interface {
 }
 
 type EsHealthService interface {
-	GoodToGo(writer http.ResponseWriter, req *http.Request)
+	GTG() gtg.Status
 	ConnectivityHealthyCheck() fthealth.Check
 	ClusterIsHealthyCheck() fthealth.Check
 	IndexMappingsCheck() fthealth.Check
@@ -64,11 +64,12 @@ func (es *esService) setElasticClient(ec *elastic.Client) {
 	log.Info("injected ElasticSearch connection")
 }
 
-//GoodToGo returns a 503 if the healthcheck fails - suitable for use from varnish to check availability of a node
-func (service *esService) GoodToGo(writer http.ResponseWriter, req *http.Request) {
+// GTG returns a 503 if the healthcheck fails - suitable for use from varnish to check availability of a node
+func (service *esService) GTG() gtg.Status {
 	if _, err := service.healthChecker(); err != nil {
-		writer.WriteHeader(http.StatusServiceUnavailable)
+		return gtg.Status{GoodToGo: false, Message: err.Error()}
 	}
+	return gtg.Status{GoodToGo: true}
 }
 
 func (es *esService) GetClusterHealth() (*elastic.ClusterHealthResponse, error) {

@@ -135,19 +135,22 @@ func logStartupConfig(port, esEndpoint, esAuth, esIndex *string) {
 func routeRequest(port *string, healthService service.EsHealthService, systemCode string) {
 	servicesRouter := vestigo.NewRouter()
 
-	healthCheck := fthealth.HealthCheck{
-		SystemCode:  systemCode,
-		Name:        "Elasticsearch Service Healthcheck",
-		Description: "Checks for ES",
-		Checks: []fthealth.Check{
-			healthService.ConnectivityHealthyCheck(),
-			healthService.ClusterIsHealthyCheck(),
-			healthService.IndexMappingsCheck(),
+	healthCheck := fthealth.TimedHealthCheck{
+		HealthCheck: fthealth.HealthCheck{
+			SystemCode:  systemCode,
+			Name:        "Elasticsearch Service Healthcheck",
+			Description: "Checks for ES",
+			Checks: []fthealth.Check{
+				healthService.ConnectivityHealthyCheck(),
+				healthService.ClusterIsHealthyCheck(),
+				healthService.IndexMappingsCheck(),
+			},
 		},
+		Timeout: 10 * time.Second,
 	}
 	http.HandleFunc("/__health", fthealth.Handler(healthCheck))
 
-	http.HandleFunc(status.GTGPath, healthService.GoodToGo)
+	http.HandleFunc(status.GTGPath, status.NewGoodToGoHandler(healthService.GTG))
 	http.HandleFunc(status.BuildInfoPath, status.BuildInfoHandler)
 
 	http.Handle("/", servicesRouter)
