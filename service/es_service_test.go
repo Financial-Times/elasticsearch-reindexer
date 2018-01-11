@@ -39,6 +39,10 @@ var (
 )
 
 func getElasticSearchTestURL(t *testing.T) string {
+	if testing.Short() {
+		t.Skip("Skipping elasticsearch integration tests, --short flag is set")
+	}
+
 	esURL := os.Getenv("ELASTICSEARCH_TEST_URL")
 	if strings.TrimSpace(esURL) == "" {
 		t.Fatal("Please set the environment variable ELASTICSEARCH_TEST_URL to run ElasticSearch integration tests (e.g. export ELASTICSEARCH_TEST_URL=http://localhost:9200).")
