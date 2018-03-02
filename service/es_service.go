@@ -102,7 +102,7 @@ func (service *esService) ClusterIsHealthyCheck() fthealth.Check {
 		BusinessImpact:   "Full or partial degradation in serving requests from Elasticsearch",
 		Name:             "Check Elasticsearch cluster health",
 		PanicGuide:       service.panicGuideUrl,
-		Severity:         1,
+		Severity:         2,
 		TechnicalSummary: "Elasticsearch cluster is not healthy.",
 		Checker:          service.healthChecker,
 	}
@@ -127,7 +127,7 @@ func (service *esService) ConnectivityHealthyCheck() fthealth.Check {
 		BusinessImpact:   "Could not connect to Elasticsearch",
 		Name:             "Check connectivity to the Elasticsearch cluster",
 		PanicGuide:       service.panicGuideUrl,
-		Severity:         1,
+		Severity:         2,
 		TechnicalSummary: "Connection to Elasticsearch cluster could not be created. Please check your AWS credentials.",
 		Checker:          service.connectivityChecker,
 	}
