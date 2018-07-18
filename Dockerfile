@@ -2,7 +2,7 @@ FROM alpine:3.5
 
 COPY . /gopath/src/github.com/Financial-Times/elasticsearch-reindexer/
 
-RUN apk --update add git go libc-dev ca-certificates \
+RUN apk --update add git go libc-dev ca-certificates curl \
   && cd /gopath/src/github.com/Financial-Times/elasticsearch-reindexer \
   && export GOPATH=$(pwd | sed "s/\/src\/github\.com\/.*$//") \
   && BUILDINFO_PACKAGE="github.com/Financial-Times/elasticsearch-reindexer/vendor/github.com/Financial-Times/service-status-go/buildinfo." \
@@ -13,8 +13,9 @@ RUN apk --update add git go libc-dev ca-certificates \
   && BUILDER="builder=$(go version)" \
   && LDFLAGS="-X '"${BUILDINFO_PACKAGE}$VERSION"' -X '"${BUILDINFO_PACKAGE}$DATETIME"' -X '"${BUILDINFO_PACKAGE}$REPOSITORY"' -X '"${BUILDINFO_PACKAGE}$REVISION"' -X '"${BUILDINFO_PACKAGE}$BUILDER"'" \
   && echo $LDFLAGS \
-  && go get -u github.com/kardianos/govendor \
-  && $GOPATH/bin/govendor sync \
+  && mkdir -p /gopath/bin \
+  && curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh \
+  && $GOPATH/bin/dep ensure -v -vendor-only \
   && go build -ldflags="${LDFLAGS}" \
   && mv elasticsearch-reindexer /elasticsearch-reindexer \
   && mv startup.sh /startup.sh \
