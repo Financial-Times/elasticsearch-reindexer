@@ -15,15 +15,15 @@ jobs:
           command: |
             go get github.com/mattn/goveralls
             go get -u github.com/jstemmer/go-junit-report
-            go get -u github.com/kardianos/govendor
+            curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
       - run:
           name: Test Results
           command: |
             mkdir -p /tmp/test-results
             mkdir -p /tmp/coverage-results
       - run:
-          name: Govendor Sync
-          command: govendor sync -v
+          name: Dep Ensure
+          command: dep ensure -v -vendor-only
       - run:
           name: Go Build
           command: go build -v
