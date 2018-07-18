@@ -1,4 +1,4 @@
-FROM alpine:3.5
+FROM alpine:3.8
 
 COPY . /gopath/src/github.com/Financial-Times/elasticsearch-reindexer/
 
