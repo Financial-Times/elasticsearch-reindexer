@@ -88,7 +88,7 @@ func main() {
 	})
 	panicGuideUrl := app.String(cli.StringOpt{
 		Name:   "panic-guide-url",
-		Value:  "https://dewey.ft.com/TODO.html",
+		Value:  "https://runbooks.in.ft.com/concepts-reindexer",
 		Desc:   "Panic Guide URL",
 		EnvVar: "PANIC_GUIDE_URL",
 	})

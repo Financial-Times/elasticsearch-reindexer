@@ -41,8 +41,18 @@ type esService struct {
 	aliasForAllConcepts string
 }
 
-func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string, aliasFilterFile string, indexVersion string, panicGuideUrl string, aliasForAllConcepts string) *esService {
-	es := &esService{aliasName: aliasName, mappingFile: mappingFile, aliasFilterFile: aliasFilterFile, indexVersion: indexVersion, pollReindexInterval: time.Minute, progress: "not started", panicGuideUrl: panicGuideUrl, aliasForAllConcepts: aliasForAllConcepts}
+func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string, aliasFilterFile string,
+	indexVersion string, panicGuideUrl string, aliasForAllConcepts string) *esService {
+	es := &esService{
+		aliasName:           aliasName,
+		mappingFile:         mappingFile,
+		aliasFilterFile:     aliasFilterFile,
+		indexVersion:        indexVersion,
+		pollReindexInterval: time.Minute,
+		progress:            "not started",
+		panicGuideUrl:       panicGuideUrl,
+		aliasForAllConcepts: aliasForAllConcepts,
+	}
 	go func() {
 		for ec := range ch {
 			es.setElasticClient(ec)
@@ -251,12 +261,13 @@ func (es *esService) MigrateIndex() error {
 		return err
 	}
 
-	err = es.updateAlias(client, es.aliasForAllConcepts, "", currentIndexName, newIndexName)
-	if err != nil {
-		log.WithError(err).Error(fmt.Sprintf("failed to update alias %s", es.aliasForAllConcepts))
-		return err
+	if es.aliasForAllConcepts != "" {
+		err = es.updateAlias(client, es.aliasForAllConcepts, "", currentIndexName, newIndexName)
+		if err != nil {
+			log.WithError(err).Error(fmt.Sprintf("failed to update alias %s", es.aliasForAllConcepts))
+			return err
+		}
 	}
-
 	log.WithFields(map[string]interface{}{"from": currentIndexName, "to": newIndexName}).Info("index migration completed")
 
 	return nil
