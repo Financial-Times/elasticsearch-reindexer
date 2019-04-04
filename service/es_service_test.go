@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	log "github.com/Financial-Times/go-logger"
 	"github.com/Masterminds/semver"
-	log "github.com/Sirupsen/logrus"
 	"github.com/satori/go.uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,6 +31,7 @@ const (
 	testNewMappingFile  = "test/new-mapping.json"
 	testAliasFilterFile = "test/alias-filter.json"
 	size                = 100
+	aliasForAllConcepts = "aliasForAllConcepts"
 )
 
 var (
@@ -66,7 +67,7 @@ func createIndex(ec *elastic.Client, indexName string, mappingFile string) error
 }
 
 func createAlias(ec *elastic.Client, aliasName string, indexName string) error {
-	log.WithFields(log.Fields{"index": indexName, "alias": aliasName}).Info("test case is creating alias")
+	log.WithFields(map[string]interface{}{"index": indexName, "alias": aliasName}).Info("test case is creating alias")
 	_, err := ec.Alias().Add(indexName, aliasName).Do(context.Background())
 	if err != nil {
 		return err
@@ -76,7 +77,7 @@ func createAlias(ec *elastic.Client, aliasName string, indexName string) error {
 
 func writeTestConcepts(ec *elastic.Client, indexName string, esConceptType string, ftConceptType string, amount int) error {
 	for i := 0; i < amount; i++ {
-		uuid := uuid.NewV4().String()
+		testUUID := uuid.NewV4().String()
 
 		aliases := []string{}
 		if i%2 == 0 {
@@ -84,9 +85,9 @@ func writeTestConcepts(ec *elastic.Client, indexName string, esConceptType strin
 		}
 
 		payload := map[string]interface{}{
-			"id":         uuid,
-			"apiUrl":     fmt.Sprintf("%s/%s/%s", apiBaseURL, esConceptType, uuid),
-			"prefLabel":  fmt.Sprintf("Test concept %s %s", esConceptType, uuid),
+			"id":         testUUID,
+			"apiUrl":     fmt.Sprintf("%s/%s/%s", apiBaseURL, esConceptType, testUUID),
+			"prefLabel":  fmt.Sprintf("Test concept %s %s", esConceptType, testUUID),
 			"types":      []string{ftConceptType},
 			"directType": ftConceptType,
 			"aliases":    aliases,
@@ -95,7 +96,7 @@ func writeTestConcepts(ec *elastic.Client, indexName string, esConceptType strin
 		_, err := ec.Index().
 			Index(indexName).
 			Type(esConceptType).
-			Id(uuid).
+			Id(testUUID).
 			BodyJson(payload).
 			Do(context.Background())
 		if err != nil {
@@ -124,6 +125,7 @@ func TestEsServiceSuite(t *testing.T) {
 }
 
 func (s *EsServiceTestSuite) SetupSuite() {
+	log.InitLogger("test", "warning")
 	oldVersion := semver.MustParse(testIndexVersion)
 	testOldIndexName = fmt.Sprintf("%s-%s", testIndexName, oldVersion.String())
 	requiredVersion := oldVersion.IncPatch()
@@ -146,13 +148,15 @@ func (s *EsServiceTestSuite) TearDownSuite() {
 }
 
 func (s *EsServiceTestSuite) SetupTest() {
-	s.service = esService{}
 	s.indexName = testOldIndexName
 
-	s.ec.Alias().Remove(testOldIndexName, testIndexName).Do(context.Background())
-	s.ec.Alias().Remove(testNewIndexName, testIndexName).Do(context.Background())
-	s.ec.DeleteIndex(testOldIndexName).Do(context.Background())
-	s.ec.DeleteIndex(testNewIndexName).Do(context.Background())
+	//ignore errors
+	_, _ = s.ec.Alias().Remove(testOldIndexName, testIndexName).Do(context.Background())
+	_, _ = s.ec.Alias().Remove(testNewIndexName, testIndexName).Do(context.Background())
+	_, _ = s.ec.Alias().Remove(testNewIndexName, aliasForAllConcepts).Do(context.Background())
+	_, _ = s.ec.Alias().Remove(testNewIndexName, aliasForAllConcepts).Do(context.Background())
+	_, _ = s.ec.DeleteIndex(testOldIndexName).Do(context.Background())
+	_, _ = s.ec.DeleteIndex(testNewIndexName).Do(context.Background())
 
 	err := createIndex(s.ec, testOldIndexName, testOldMappingFile)
 	require.NoError(s.T(), err, "expected no error in creating index")
@@ -172,6 +176,7 @@ func (s *EsServiceTestSuite) forNextIndexVersion() {
 }
 
 func (s *EsServiceTestSuite) TestCheckIndexAliasesMatch() {
+	s.service = esService{}
 	s.forCurrentIndexVersion()
 
 	err := createAlias(s.ec, testIndexName, testOldIndexName)
@@ -186,6 +191,7 @@ func (s *EsServiceTestSuite) TestCheckIndexAliasesMatch() {
 }
 
 func (s *EsServiceTestSuite) TestCheckIndexAliasesDoNotMatch() {
+	s.service = esService{}
 	s.forNextIndexVersion()
 
 	err := createAlias(s.ec, testIndexName, testOldIndexName)
@@ -200,6 +206,7 @@ func (s *EsServiceTestSuite) TestCheckIndexAliasesDoNotMatch() {
 }
 
 func (s *EsServiceTestSuite) TestCheckIndexAliasesNotFound() {
+	s.service = esService{}
 	s.forCurrentIndexVersion()
 
 	requireUpdate, currentIndexName, newIndexName, err := s.service.checkIndexAliases(s.ec, testIndexName)
@@ -211,6 +218,7 @@ func (s *EsServiceTestSuite) TestCheckIndexAliasesNotFound() {
 }
 
 func (s *EsServiceTestSuite) TestCheckIndexAliasesMultiple() {
+	s.service = esService{}
 	s.forCurrentIndexVersion()
 
 	err := createAlias(s.ec, testIndexName, testOldIndexName)
@@ -235,6 +243,7 @@ func (s *EsServiceTestSuite) TestCheckIndexAliasesMultiple() {
 }
 
 func (s *EsServiceTestSuite) TestCreateIndex() {
+	s.service = esService{}
 	s.forNextIndexVersion()
 	indexMapping, err := ioutil.ReadFile(testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for reading index mapping file")
@@ -249,6 +258,7 @@ func (s *EsServiceTestSuite) TestCreateIndex() {
 }
 
 func (s *EsServiceTestSuite) TestCreateIndexFailure() {
+	s.service = esService{}
 	s.forNextIndexVersion()
 	indexMapping, err := ioutil.ReadFile(testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for reading index mapping file")
@@ -263,6 +273,7 @@ func (s *EsServiceTestSuite) TestCreateIndexFailure() {
 }
 
 func (s *EsServiceTestSuite) TestSetReadOnly() {
+	s.service = esService{}
 	s.forCurrentIndexVersion()
 
 	err := s.service.setReadOnly(s.ec, testOldIndexName)
@@ -280,6 +291,7 @@ func (s *EsServiceTestSuite) TestSetReadOnly() {
 }
 
 func (s *EsServiceTestSuite) TestSetReadOnlyFailure() {
+	s.service = esService{}
 	s.forCurrentIndexVersion()
 
 	err := s.service.setReadOnly(s.ec, testNewIndexName)
@@ -299,6 +311,7 @@ func (s *EsServiceTestSuite) TestSetReadOnlyFailure() {
 }
 
 func (s *EsServiceTestSuite) TestReindexAndWait() {
+	s.service = esService{}
 	s.forNextIndexVersion()
 	err := createIndex(s.ec, testNewIndexName, testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for creating new index")
@@ -327,6 +340,7 @@ func (s *EsServiceTestSuite) TestReindexAndWait() {
 }
 
 func (s *EsServiceTestSuite) TestReindexFailure() {
+	s.service = esService{}
 	s.forNextIndexVersion()
 
 	count, err := s.service.reindex(s.ec, testOldIndexName, testNewIndexName)
@@ -336,6 +350,7 @@ func (s *EsServiceTestSuite) TestReindexFailure() {
 }
 
 func (s *EsServiceTestSuite) TestUpdateAlias() {
+	s.service = esService{}
 	s.forNextIndexVersion()
 	err := createIndex(s.ec, testNewIndexName, testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for creating new index")
@@ -355,6 +370,7 @@ func (s *EsServiceTestSuite) TestUpdateAlias() {
 }
 
 func (s *EsServiceTestSuite) TestUpdateAliasNoIndexToRemove() {
+	s.service = esService{}
 	s.forNextIndexVersion()
 	err := createIndex(s.ec, testNewIndexName, testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for creating new index")
@@ -366,11 +382,12 @@ func (s *EsServiceTestSuite) TestUpdateAliasNoIndexToRemove() {
 	assert.NoError(s.T(), err, "expected no error for retrieving aliases")
 
 	actual := aliases.IndicesByAlias(testIndexName)
-	assert.Len(s.T(), actual, 1, "aliases")
+	require.Len(s.T(), actual, 1, "aliases")
 	assert.Equal(s.T(), testNewIndexName, actual[0], "updated alias")
 }
 
 func (s *EsServiceTestSuite) TestUpdateAliasFailure() {
+	s.service = esService{}
 	s.forNextIndexVersion()
 
 	err := createAlias(s.ec, testIndexName, testOldIndexName)
@@ -389,6 +406,7 @@ func (s *EsServiceTestSuite) TestUpdateAliasFailure() {
 }
 
 func (s *EsServiceTestSuite) TestUpdateAliasWithFilter() {
+	s.service = esService{}
 	s.forNextIndexVersion()
 	err := createIndex(s.ec, testNewIndexName, testNewMappingFile)
 	require.NoError(s.T(), err, "expected no error for creating new index")
@@ -411,6 +429,7 @@ func (s *EsServiceTestSuite) TestUpdateAliasWithFilter() {
 }
 
 func (s *EsServiceTestSuite) TestMigrateIndex() {
+	s.service = esService{}
 	s.forNextIndexVersion()
 
 	_, err := s.ec.IndexPutSettings().BodyJson(map[string]interface{}{"index.number_of_replicas": 0}).Do(context.Background())
@@ -421,7 +440,10 @@ func (s *EsServiceTestSuite) TestMigrateIndex() {
 
 	s.service.elasticClient = s.ec
 	s.service.pollReindexInterval = time.Second
-	err = s.service.MigrateIndex(testIndexName, testNewMappingFile, "")
+	s.service.aliasName = testIndexName
+	s.service.aliasForAllConcepts = aliasForAllConcepts
+	s.service.mappingFile = testNewMappingFile
+	err = s.service.MigrateIndex()
 
 	assert.NoError(s.T(), err, "expected no error for migrating index in unhealthy ES cluster")
 
@@ -429,6 +451,10 @@ func (s *EsServiceTestSuite) TestMigrateIndex() {
 	assert.NoError(s.T(), err, "expected no error for retrieving aliases")
 
 	actual := aliases.IndicesByAlias(testIndexName)
+	assert.Len(s.T(), actual, 1, "aliases")
+	assert.Equal(s.T(), testNewIndexName, actual[0], "updated alias")
+
+	actual = aliases.IndicesByAlias(aliasForAllConcepts)
 	assert.Len(s.T(), actual, 1, "aliases")
 	assert.Equal(s.T(), testNewIndexName, actual[0], "updated alias")
 
@@ -440,6 +466,7 @@ func (s *EsServiceTestSuite) TestMigrateIndex() {
 }
 
 func (s *EsServiceTestSuite) TestMigrateIndexWithAliasFilter() {
+	s.service = esService{}
 	s.forNextIndexVersion()
 
 	_, err := s.ec.IndexPutSettings().BodyJson(map[string]interface{}{"index.number_of_replicas": 0}).Do(context.Background())
@@ -450,7 +477,11 @@ func (s *EsServiceTestSuite) TestMigrateIndexWithAliasFilter() {
 
 	s.service.elasticClient = s.ec
 	s.service.pollReindexInterval = time.Second
-	err = s.service.MigrateIndex(testIndexName, testNewMappingFile, testAliasFilterFile)
+	s.service.aliasName = testIndexName
+	s.service.aliasForAllConcepts = aliasForAllConcepts
+	s.service.mappingFile = testNewMappingFile
+	s.service.aliasFilterFile = testAliasFilterFile
+	err = s.service.MigrateIndex()
 
 	assert.NoError(s.T(), err, "expected no error for migrating index in unhealthy ES cluster")
 
@@ -458,6 +489,10 @@ func (s *EsServiceTestSuite) TestMigrateIndexWithAliasFilter() {
 	assert.NoError(s.T(), err, "expected no error for retrieving aliases")
 
 	actual := aliases.IndicesByAlias(testIndexName)
+	assert.Len(s.T(), actual, 1, "aliases")
+	assert.Equal(s.T(), testNewIndexName, actual[0], "updated alias")
+
+	actual = aliases.IndicesByAlias(aliasForAllConcepts)
 	assert.Len(s.T(), actual, 1, "aliases")
 	assert.Equal(s.T(), testNewIndexName, actual[0], "updated alias")
 
@@ -469,6 +504,7 @@ func (s *EsServiceTestSuite) TestMigrateIndexWithAliasFilter() {
 }
 
 func (s *EsServiceTestSuite) TestMigrateIndexWithMissingAliasFilter() {
+	s.service = esService{}
 	s.forNextIndexVersion()
 
 	_, err := s.ec.IndexPutSettings().BodyJson(map[string]interface{}{"index.number_of_replicas": 0}).Do(context.Background())
@@ -479,7 +515,10 @@ func (s *EsServiceTestSuite) TestMigrateIndexWithMissingAliasFilter() {
 
 	s.service.elasticClient = s.ec
 	s.service.pollReindexInterval = time.Second
-	err = s.service.MigrateIndex(testIndexName, testNewMappingFile, "./no-such-file.json")
+	s.service.aliasName = testIndexName
+	s.service.mappingFile = testNewMappingFile
+	s.service.aliasFilterFile = "./no-such-file.json"
+	err = s.service.MigrateIndex()
 
 	assert.Error(s.T(), err, "expected error for migrating index with missing alias filter")
 
@@ -489,16 +528,23 @@ func (s *EsServiceTestSuite) TestMigrateIndexWithMissingAliasFilter() {
 	actual := aliases.IndicesByAlias(testIndexName)
 	assert.Len(s.T(), actual, 1, "aliases")
 	assert.Equal(s.T(), testOldIndexName, actual[0], "unmodified alias")
+
+	actual = aliases.IndicesByAlias(aliasForAllConcepts)
+	assert.Len(s.T(), actual, 0, "aliases")
 }
 
 func (s *EsServiceTestSuite) TestMigrateIndexClusterUnhealthy() {
+	s.service = esService{}
 	s.forNextIndexVersion()
 
 	err := createAlias(s.ec, testIndexName, testOldIndexName)
 	require.NoError(s.T(), err, "expected no error in creating index alias")
 
 	s.service.elasticClient = s.ec
-	err = s.service.MigrateIndex(testIndexName, testNewMappingFile, testAliasFilterFile)
+	s.service.aliasName = testIndexName
+	s.service.mappingFile = testNewMappingFile
+	s.service.aliasFilterFile = testAliasFilterFile
+	err = s.service.MigrateIndex()
 
 	assert.Error(s.T(), err, "expected error for migrating index in unhealthy ES cluster")
 	assert.EqualError(s.T(), err, "Cluster is yellow", "error message")
@@ -512,6 +558,7 @@ func (s *EsServiceTestSuite) TestMigrateIndexClusterUnhealthy() {
 }
 
 func (s *EsServiceTestSuite) TestMappingsCheckerInProgress() {
+	s.service = esService{}
 	s.forNextIndexVersion()
 	progress := "some progress"
 	s.service.progress = progress
@@ -523,6 +570,7 @@ func (s *EsServiceTestSuite) TestMappingsCheckerInProgress() {
 }
 
 func (s *EsServiceTestSuite) TestMappingsCheckerHealthy() {
+	s.service = esService{}
 	s.forNextIndexVersion()
 
 	s.service.migrationCheck = true
@@ -534,6 +582,7 @@ func (s *EsServiceTestSuite) TestMappingsCheckerHealthy() {
 }
 
 func (s *EsServiceTestSuite) TestMappingsCheckerUnhealthy() {
+	s.service = esService{}
 	s.forNextIndexVersion()
 
 	expectedError := errors.New("test error")

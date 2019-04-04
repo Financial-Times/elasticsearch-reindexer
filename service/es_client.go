@@ -3,7 +3,7 @@ package service
 import (
 	"net/http"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/Financial-Times/go-logger"
 	awsauth "github.com/smartystreets/go-aws-auth"
 	"gopkg.in/olivere/elastic.v5"
 )
@@ -60,7 +60,7 @@ func newClient(endpoint string, traceLogging bool, options ...elastic.ClientOpti
 	optionFuncs = append(optionFuncs, options...)
 
 	if traceLogging {
-		optionFuncs = append(optionFuncs, elastic.SetTraceLog(log.New()))
+		optionFuncs = append(optionFuncs, elastic.SetTraceLog(log.Logger()))
 	}
 
 	return elastic.NewClient(optionFuncs...)
