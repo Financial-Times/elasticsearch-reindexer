@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"strings"
 	"sync"
 	"time"
 
@@ -261,7 +262,7 @@ func (es *esService) MigrateIndex() error {
 		return err
 	}
 
-	if es.aliasForAllConcepts != "" {
+	if strings.TrimSpace(es.aliasForAllConcepts) != "" {
 		err = es.updateAlias(client, es.aliasForAllConcepts, "", currentIndexName, newIndexName)
 		if err != nil {
 			log.WithError(err).Error(fmt.Sprintf("failed to update alias %s", es.aliasForAllConcepts))
