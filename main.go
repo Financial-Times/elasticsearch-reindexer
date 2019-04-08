@@ -7,8 +7,8 @@ import (
 
 	"github.com/Financial-Times/elasticsearch-reindexer/service"
 	fthealth "github.com/Financial-Times/go-fthealth/v1_1"
+	log "github.com/Financial-Times/go-logger"
 	status "github.com/Financial-Times/service-status-go/httphandlers"
-	log "github.com/Sirupsen/logrus"
 	"github.com/husobee/vestigo"
 	"github.com/jawher/mow.cli"
 	"gopkg.in/olivere/elastic.v5"
@@ -68,6 +68,12 @@ func main() {
 		Desc:   "An optional filter query to apply to the alias",
 		EnvVar: "ALIAS_FILTER_FILE",
 	})
+	aliasForAllConcepts := app.String(cli.StringOpt{
+		Name:   "alias-for-all-concepts",
+		Value:  "all-concepts",
+		Desc:   "The name of the index alias which won't have any filters",
+		EnvVar: "ALIAS_FOR_ALL_CONCEPTS",
+	})
 	esTraceLogging := app.Bool(cli.BoolOpt{
 		Name:   "elasticsearch-trace",
 		Value:  false,
@@ -82,13 +88,12 @@ func main() {
 	})
 	panicGuideUrl := app.String(cli.StringOpt{
 		Name:   "panic-guide-url",
-		Value:  "https://dewey.ft.com/TODO.html",
+		Value:  "https://runbooks.in.ft.com/concepts-reindexer",
 		Desc:   "Panic Guide URL",
 		EnvVar: "PANIC_GUIDE_URL",
 	})
 
-	log.SetFormatter(&log.JSONFormatter{})
-	log.SetLevel(log.InfoLevel)
+	log.InitDefaultLogger("elasticsearch-reindexer")
 
 	app.Action = func() {
 		logStartupConfig(port, esEndpoint, esAuth, esIndex)
@@ -113,7 +118,7 @@ func main() {
 			}
 		}()
 
-		esService := service.NewEsService(ecc, *esIndex, *mappingFile, *aliasFilterFile, *mappingVersion, *panicGuideUrl)
+		esService := service.NewEsService(ecc, *esIndex, *mappingFile, *aliasFilterFile, *mappingVersion, *panicGuideUrl, *aliasForAllConcepts)
 		routeRequest(port, esService, *systemCode)
 	}
 

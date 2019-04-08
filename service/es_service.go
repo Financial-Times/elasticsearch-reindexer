@@ -5,23 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"strings"
 	"sync"
 	"time"
 
 	fthealth "github.com/Financial-Times/go-fthealth/v1_1"
+	log "github.com/Financial-Times/go-logger"
 	"github.com/Financial-Times/service-status-go/gtg"
-	log "github.com/Sirupsen/logrus"
 	"gopkg.in/olivere/elastic.v5"
 )
 
 var (
-	ErrNoIndexVersion  error = errors.New("No index version has been specified")
-	ErrNoElasticClient error = errors.New("No ElasticSearch client available")
+	ErrNoIndexVersion  = errors.New("No index version has been specified")
+	ErrNoElasticClient = errors.New("No ElasticSearch client available")
 )
-
-type EsService interface {
-	MigrateIndex(aliasName string, mappingFile string) error
-}
 
 type EsHealthService interface {
 	GTG() gtg.Status
@@ -42,14 +39,25 @@ type esService struct {
 	migrationCheck      bool
 	migrationErr        error
 	panicGuideUrl       string
+	aliasForAllConcepts string
 }
 
-func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string, aliasFilterFile string, indexVersion string, panicGuideUrl string) *esService {
-	es := &esService{aliasName: aliasName, mappingFile: mappingFile, aliasFilterFile: aliasFilterFile, indexVersion: indexVersion, pollReindexInterval: time.Minute, progress: "not started", panicGuideUrl: panicGuideUrl}
+func NewEsService(ch chan *elastic.Client, aliasName string, mappingFile string, aliasFilterFile string,
+	indexVersion string, panicGuideUrl string, aliasForAllConcepts string) *esService {
+	es := &esService{
+		aliasName:           aliasName,
+		mappingFile:         mappingFile,
+		aliasFilterFile:     aliasFilterFile,
+		indexVersion:        indexVersion,
+		pollReindexInterval: time.Minute,
+		progress:            "not started",
+		panicGuideUrl:       panicGuideUrl,
+		aliasForAllConcepts: aliasForAllConcepts,
+	}
 	go func() {
 		for ec := range ch {
 			es.setElasticClient(ec)
-			es.migrationErr = es.MigrateIndex(es.aliasName, es.mappingFile, es.aliasFilterFile)
+			es.migrationErr = es.MigrateIndex()
 			es.migrationCheck = true
 		}
 	}()
@@ -65,8 +73,8 @@ func (es *esService) setElasticClient(ec *elastic.Client) {
 }
 
 // GTG returns a 503 if the healthcheck fails - suitable for use from varnish to check availability of a node
-func (service *esService) GTG() gtg.Status {
-	if _, err := service.healthChecker(); err != nil {
+func (es *esService) GTG() gtg.Status {
+	if _, err := es.healthChecker(); err != nil {
 		return gtg.Status{GoodToGo: false, Message: err.Error()}
 	}
 	return gtg.Status{GoodToGo: true}
@@ -91,26 +99,26 @@ func (es *esService) checkElasticClient() error {
 	return nil
 }
 
-func (service *esService) esClient() *elastic.Client {
-	service.RLock()
-	defer service.RUnlock()
-	return service.elasticClient
+func (es *esService) esClient() *elastic.Client {
+	es.RLock()
+	defer es.RUnlock()
+	return es.elasticClient
 }
 
-func (service *esService) ClusterIsHealthyCheck() fthealth.Check {
+func (es *esService) ClusterIsHealthyCheck() fthealth.Check {
 	return fthealth.Check{
 		BusinessImpact:   "Full or partial degradation in serving requests from Elasticsearch",
 		Name:             "Check Elasticsearch cluster health",
-		PanicGuide:       service.panicGuideUrl,
+		PanicGuide:       es.panicGuideUrl,
 		Severity:         2,
 		TechnicalSummary: "Elasticsearch cluster is not healthy.",
-		Checker:          service.healthChecker,
+		Checker:          es.healthChecker,
 	}
 }
 
-func (service *esService) healthChecker() (string, error) {
-	if service.esClient() != nil {
-		output, err := service.GetClusterHealth()
+func (es *esService) healthChecker() (string, error) {
+	if es.esClient() != nil {
+		output, err := es.GetClusterHealth()
 		if err != nil {
 			return "Cluster is not healthy: ", err
 		} else if output.Status != "green" {
@@ -122,54 +130,54 @@ func (service *esService) healthChecker() (string, error) {
 	return "Couldn't check the cluster's health.", errors.New("Couldn't establish connectivity.")
 }
 
-func (service *esService) ConnectivityHealthyCheck() fthealth.Check {
+func (es *esService) ConnectivityHealthyCheck() fthealth.Check {
 	return fthealth.Check{
 		BusinessImpact:   "Could not connect to Elasticsearch",
 		Name:             "Check connectivity to the Elasticsearch cluster",
-		PanicGuide:       service.panicGuideUrl,
+		PanicGuide:       es.panicGuideUrl,
 		Severity:         2,
 		TechnicalSummary: "Connection to Elasticsearch cluster could not be created. Please check your AWS credentials.",
-		Checker:          service.connectivityChecker,
+		Checker:          es.connectivityChecker,
 	}
 }
 
-func (service *esService) connectivityChecker() (string, error) {
-	if service.esClient() == nil {
+func (es *esService) connectivityChecker() (string, error) {
+	if es.esClient() == nil {
 		return "", errors.New("Could not connect to elasticsearch, please check the application parameters/env variables, and restart the service.")
 	}
 
-	_, err := service.GetClusterHealth()
+	_, err := es.GetClusterHealth()
 	if err != nil {
 		return "Could not connect to elasticsearch", err
 	}
 	return "Successfully connected to the cluster", nil
 }
 
-func (service *esService) IndexMappingsCheck() fthealth.Check {
+func (es *esService) IndexMappingsCheck() fthealth.Check {
 	return fthealth.Check{
 		BusinessImpact:   "Search results may not be as expected for the data set.",
 		Name:             "Check Elasticsearch mappings version",
-		PanicGuide:       service.panicGuideUrl,
+		PanicGuide:       es.panicGuideUrl,
 		Severity:         2,
 		TechnicalSummary: "Elasticsearch mappings may not have been migrated.",
-		Checker:          service.mappingsChecker,
+		Checker:          es.mappingsChecker,
 	}
 }
 
-func (service *esService) mappingsChecker() (string, error) {
-	if service.migrationErr != nil {
-		return "Elasticsearch mappings were not migrated successfully", service.migrationErr
+func (es *esService) mappingsChecker() (string, error) {
+	if es.migrationErr != nil {
+		return "Elasticsearch mappings were not migrated successfully", es.migrationErr
 	}
 
-	if !service.migrationCheck {
-		msg := fmt.Sprintf("Elasticsearch mappings migration to version %s is in progress (%s)", service.indexVersion, service.progress)
+	if !es.migrationCheck {
+		msg := fmt.Sprintf("Elasticsearch mappings migration to version %s is in progress (%s)", es.indexVersion, es.progress)
 		return msg, errors.New(msg)
 	}
 
-	return fmt.Sprintf("Elasticsearch mappings are at version %s", service.indexVersion), nil
+	return fmt.Sprintf("Elasticsearch mappings are at version %s", es.indexVersion), nil
 }
 
-func (es *esService) MigrateIndex(aliasName string, mappingFile string, aliasFilterFile string) error {
+func (es *esService) MigrateIndex() error {
 	if len(es.indexVersion) == 0 {
 		log.Error(ErrNoIndexVersion.Error())
 		return ErrNoIndexVersion
@@ -183,17 +191,17 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string, aliasFil
 	es.progress = "starting"
 	client := es.esClient()
 
-	requireUpdate, currentIndexName, newIndexName, err := es.checkIndexAliases(client, aliasName)
+	requireUpdate, currentIndexName, newIndexName, err := es.checkIndexAliases(client, es.aliasName)
 	if err != nil {
-		log.WithError(err).Error("unable to read alias definition")
+		log.WithError(err).Error(fmt.Sprintf("unable to read alias definition for %s alias", es.aliasName))
 		return err
 	}
 	if !requireUpdate {
-		log.WithField("index", es.indexVersion).Info("index is up-to-date")
+		log.WithField("index", es.indexVersion).Info(fmt.Sprintf("index with %s alias is up-to-date", es.aliasName))
 		return nil
 	}
 
-	mapping, err := ioutil.ReadFile(mappingFile)
+	mapping, err := ioutil.ReadFile(es.mappingFile)
 	if err != nil {
 		log.WithError(err).Error("unable to read new index mapping definition")
 		return err
@@ -239,8 +247,8 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string, aliasFil
 	}
 
 	var aliasFilter string
-	if len(aliasFilterFile) > 0 {
-		aliasFilterBytes, err := ioutil.ReadFile(aliasFilterFile)
+	if len(es.aliasFilterFile) > 0 {
+		aliasFilterBytes, err := ioutil.ReadFile(es.aliasFilterFile)
 		if err != nil {
 			log.WithError(err).Error("unable to read alias filter")
 			return err
@@ -248,13 +256,21 @@ func (es *esService) MigrateIndex(aliasName string, mappingFile string, aliasFil
 		aliasFilter = string(aliasFilterBytes)
 	}
 
-	err = es.updateAlias(client, aliasName, aliasFilter, currentIndexName, newIndexName)
+	err = es.updateAlias(client, es.aliasName, aliasFilter, currentIndexName, newIndexName)
 	if err != nil {
-		log.WithError(err).Error("failed to update alias")
+		log.WithError(err).Error(fmt.Sprintf("failed to update alias %s", es.aliasName))
 		return err
 	}
 
-	log.WithFields(log.Fields{"from": currentIndexName, "to": newIndexName}).Info("index migration completed")
+	if strings.TrimSpace(es.aliasForAllConcepts) != "" {
+		err = es.updateAlias(client, es.aliasForAllConcepts, "", currentIndexName, newIndexName)
+		if err != nil {
+			log.WithError(err).Error(fmt.Sprintf("failed to update alias %s", es.aliasForAllConcepts))
+			return err
+		}
+	}
+	log.WithFields(map[string]interface{}{"from": currentIndexName, "to": newIndexName}).Info("index migration completed")
+
 	return nil
 }
 
@@ -274,7 +290,7 @@ func (es *esService) checkIndexAliases(client *elastic.Client, aliasName string)
 		return true, "", requiredIndex, nil
 
 	case 1:
-		log.WithFields(log.Fields{"alias": aliasName, "index": aliasedIndices[0]}).Info("current index alias")
+		log.WithFields(map[string]interface{}{"alias": aliasName, "index": aliasedIndices[0]}).Info("current index alias")
 		requiredIndex := fmt.Sprintf("%s-%s", aliasName, es.indexVersion)
 		log.WithField("index", requiredIndex).Info("comparing to required index alias")
 
@@ -286,7 +302,7 @@ func (es *esService) checkIndexAliases(client *elastic.Client, aliasName string)
 }
 
 func (es *esService) createIndex(client *elastic.Client, indexName string, indexMapping string) error {
-	log.WithFields(log.Fields{"indexName": indexName, "mapping": indexMapping}).Info("Creating new index")
+	log.WithFields(map[string]interface{}{"indexName": indexName, "mapping": indexMapping}).Info("Creating new index")
 
 	indexService := elastic.NewIndicesCreateService(client)
 	_, err := indexService.Index(indexName).BodyString(indexMapping).Do(context.Background())
@@ -304,7 +320,7 @@ func (es *esService) setReadOnly(client *elastic.Client, indexName string) error
 }
 
 func (es *esService) reindex(client *elastic.Client, fromIndex string, toIndex string) (int, error) {
-	log.WithFields(log.Fields{"from": fromIndex, "to": toIndex}).Info("reindexing")
+	log.WithFields(map[string]interface{}{"from": fromIndex, "to": toIndex}).Info("reindexing")
 
 	counter := elastic.NewCountService(client)
 	count, err := counter.Index(toIndex).Do(context.Background())
@@ -335,7 +351,7 @@ func (es *esService) isTaskComplete(client *elastic.Client, indexName string, co
 }
 
 func (es *esService) updateAlias(client *elastic.Client, aliasName string, aliasFilter string, oldIndexName string, newIndexName string) error {
-	log.WithFields(log.Fields{"alias": aliasName, "from": oldIndexName, "to": newIndexName, "filter": aliasFilter}).Info("updating index alias")
+	log.WithFields(map[string]interface{}{"alias": aliasName, "from": oldIndexName, "to": newIndexName, "filter": aliasFilter}).Info("updating index alias")
 
 	aliasService := elastic.NewAliasService(client)
 	if len(oldIndexName) > 0 {
