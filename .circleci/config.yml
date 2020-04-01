@@ -3,11 +3,11 @@ jobs:
   build:
     working_directory: /go/src/github.com/Financial-Times/elasticsearch-reindexer
     docker:
-      - image: golang:1.7.3
+      - image: golang:1
         environment:
           GOPATH: /go
           ELASTICSEARCH_TEST_URL: http://localhost:9200
-      - image:  elasticsearch:5.1
+      - image:  elasticsearch:5.3
     steps:
       - checkout
       - run:
@@ -19,7 +19,7 @@ jobs:
       - run:
           name: Test Results
           command: |
-            mkdir -p /tmp/test-results
+            mkdir -p /tmp/test-results	
             mkdir -p /tmp/coverage-results
       - run:
           name: Dep Ensure
@@ -28,12 +28,12 @@ jobs:
           name: Go Build
           command: go build -v
       - run:
-          name: Run Tests
+          name: Run Tests	
           command: |
             go test -v -cover -race -coverprofile=/tmp/coverage-results/coverage.out .
-            go list ./... | grep -v vendor | awk -F/ '{print $4}' | xargs -I {} go test -v -cover -race -coverprofile=/tmp/coverage-results/coverage_{}.out ./{}
-            mkdir -p /tmp/test-results/
-            go test -v -race . | /go/bin/go-junit-report > /tmp/test-results/main.xml
+            go list ./... | grep -v vendor | awk -F/ '{print $4}' | xargs -I {} go test -v -cover -race -coverprofile=/tmp/coverage-results/coverage_{}.out ./{}	
+            mkdir -p /tmp/test-results/	
+            go test -v -race . | /go/bin/go-junit-report > /tmp/test-results/main.xml	
             go list ./... | grep -v vendor | awk -F/ '{print $4}' | xargs -I {} go test -v -race ./{} | /go/bin/go-junit-report > /tmp/test-results/{}.xml
       - run:
           name: Combine Coverage Results

@@ -1,10 +1,9 @@
-FROM alpine:3.8
+FROM golang:1-alpine
 
-COPY . /gopath/src/github.com/Financial-Times/elasticsearch-reindexer/
+COPY . $GOPATH/src/github.com/Financial-Times/elasticsearch-reindexer/
 
-RUN apk --update add git go libc-dev ca-certificates curl \
-  && cd /gopath/src/github.com/Financial-Times/elasticsearch-reindexer \
-  && export GOPATH=$(pwd | sed "s/\/src\/github\.com\/.*$//") \
+RUN apk --update add git libc-dev ca-certificates curl \
+  && cd $GOPATH/src/github.com/Financial-Times/elasticsearch-reindexer \
   && BUILDINFO_PACKAGE="github.com/Financial-Times/elasticsearch-reindexer/vendor/github.com/Financial-Times/service-status-go/buildinfo." \
   && VERSION="version=$(git describe --tag --always 2> /dev/null)" \
   && DATETIME="dateTime=$(date -u +%Y%m%d%H%M%S)" \
@@ -13,7 +12,6 @@ RUN apk --update add git go libc-dev ca-certificates curl \
   && BUILDER="builder=$(go version)" \
   && LDFLAGS="-X '"${BUILDINFO_PACKAGE}$VERSION"' -X '"${BUILDINFO_PACKAGE}$DATETIME"' -X '"${BUILDINFO_PACKAGE}$REPOSITORY"' -X '"${BUILDINFO_PACKAGE}$REVISION"' -X '"${BUILDINFO_PACKAGE}$BUILDER"'" \
   && echo $LDFLAGS \
-  && mkdir -p /gopath/bin \
   && curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh \
   && $GOPATH/bin/dep ensure -v -vendor-only \
   && go build -ldflags="${LDFLAGS}" \
