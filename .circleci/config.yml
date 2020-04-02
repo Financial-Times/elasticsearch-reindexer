@@ -1,4 +1,4 @@
-version: 2
+version: 2.1
 jobs:
   build:
     working_directory: /go/src/github.com/Financial-Times/elasticsearch-reindexer
@@ -38,3 +38,21 @@ jobs:
           command: goveralls -coverprofile=/tmp/coverage-results/overall-coverage.result -service=circle-ci -repotoken=$COVERALLS_TOKEN
       - store_test_results:
           path: /tmp/test-results
+  dockerfile:
+    working_directory: /elasticsearch-reindexer
+    docker:
+      - image: docker:18.03
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Build Dockerfile
+          command: docker build .
+
+workflows:
+  test-and-build-docker:
+    jobs:
+      - build
+      - dockerfile:
+          requires:
+            - build
