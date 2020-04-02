@@ -1,4 +1,6 @@
 # ElasticSearch Reindexer
+[![CircleCI](https://circleci.com/gh/Financial-Times/elasticsearch-reindexer/tree/master.svg?style=svg)](https://circleci.com/gh/Financial-Times/elasticsearch-reindexer/tree/master)
+[![Coverage Status](https://coveralls.io/repos/github/Financial-Times/elasticsearch-reindexer/badge.svg?branch=master)](https://coveralls.io/github/Financial-Times/elasticsearch-reindexer?branch=master)
 
 This is a tool that can be used to migrate data from an existing index to a new index with updated mappings.
 
