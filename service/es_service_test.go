@@ -1,3 +1,5 @@
+// +build integration
+
 package service
 
 import (
@@ -14,7 +16,7 @@ import (
 
 	log "github.com/Financial-Times/go-logger"
 	"github.com/Masterminds/semver"
-	"github.com/satori/go.uuid"
+	uuid "github.com/satori/go.uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -40,13 +42,9 @@ var (
 )
 
 func getElasticSearchTestURL(t *testing.T) string {
-	if testing.Short() {
-		t.Skip("Skipping elasticsearch integration tests, --short flag is set")
-	}
-
 	esURL := os.Getenv("ELASTICSEARCH_TEST_URL")
 	if strings.TrimSpace(esURL) == "" {
-		t.Fatal("Please set the environment variable ELASTICSEARCH_TEST_URL to run ElasticSearch integration tests (e.g. export ELASTICSEARCH_TEST_URL=http://localhost:9200).")
+		esURL = "http://localhost:9200"
 	}
 
 	return esURL

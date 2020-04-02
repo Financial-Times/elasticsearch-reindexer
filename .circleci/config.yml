@@ -26,7 +26,7 @@ jobs:
       - run:
           name: Run Tests	
           command: |
-            go test -mod=readonly -race -cover -coverprofile=/tmp/coverage-results/coverage.out ./... | go-junit-report > /tmp/test-results/main.xml
+            go test -tags=integration -mod=readonly -race -cover -coverprofile=/tmp/coverage-results/coverage.out ./... | go-junit-report > /tmp/test-results/main.xml
       - run:
           name: Combine Coverage Results
           command: |
