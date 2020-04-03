@@ -32,7 +32,4 @@ ONBUILD RUN apk --update add git ca-certificates \
   && apk del git \
   && rm -rf /index-mapping
 
-WORKDIR /
-RUN chmod +x startup.sh
-
-CMD [ "/startup.sh" ]
+CMD sh /startup.sh
