@@ -16,7 +16,7 @@ import (
 
 	log "github.com/Financial-Times/go-logger"
 	"github.com/Masterminds/semver"
-	uuid "github.com/satori/go.uuid"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -75,7 +75,7 @@ func createAlias(ec *elastic.Client, aliasName string, indexName string) error {
 
 func writeTestConcepts(ec *elastic.Client, indexName string, esConceptType string, ftConceptType string, amount int) error {
 	for i := 0; i < amount; i++ {
-		testUUID := uuid.NewV4().String()
+		testUUID := uuid.NewString()
 
 		aliases := []string{}
 		if i%2 == 0 {
