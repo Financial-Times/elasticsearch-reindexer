@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	log "github.com/Financial-Times/go-logger"
+	"github.com/olivere/elastic/v7"
 	awsauth "github.com/smartystreets/go-aws-auth"
-	"gopkg.in/olivere/elastic.v5"
 )
 
 type EsAccessConfig struct {

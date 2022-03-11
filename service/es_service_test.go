@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 package service
@@ -17,10 +18,10 @@ import (
 	log "github.com/Financial-Times/go-logger"
 	"github.com/Masterminds/semver"
 	"github.com/google/uuid"
+	"github.com/olivere/elastic/v7"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"gopkg.in/olivere/elastic.v5"
 )
 
 const (
@@ -84,6 +85,7 @@ func writeTestConcepts(ec *elastic.Client, indexName string, esConceptType strin
 
 		payload := map[string]interface{}{
 			"id":         testUUID,
+			"type":       esConceptType,
 			"apiUrl":     fmt.Sprintf("%s/%s/%s", apiBaseURL, esConceptType, testUUID),
 			"prefLabel":  fmt.Sprintf("Test concept %s %s", esConceptType, testUUID),
 			"types":      []string{ftConceptType},
@@ -93,7 +95,6 @@ func writeTestConcepts(ec *elastic.Client, indexName string, esConceptType strin
 
 		_, err := ec.Index().
 			Index(indexName).
-			Type(esConceptType).
 			Id(testUUID).
 			BodyJson(payload).
 			Do(context.Background())
@@ -595,7 +596,7 @@ func (s *EsServiceTestSuite) TestMappingsCheckerUnhealthy() {
 func hasMentionsCompletionMapping(mapping map[string]interface{}) bool {
 	for _, v := range mapping {
 		for _, fields := range v.(map[string]interface{})["mappings"].(map[string]interface{}) {
-			prefLabel := fields.(map[string]interface{})["prefLabel"].(map[string]interface{})["mapping"].(map[string]interface{})["prefLabel"].(map[string]interface{})
+			prefLabel := fields.(map[string]interface{})["mapping"].(map[string]interface{})["prefLabel"].(map[string]interface{})
 			if _, hasFields := prefLabel["fields"]; hasFields {
 				if _, hasCompletion := prefLabel["fields"].(map[string]interface{})["mentionsCompletion"]; hasCompletion {
 					return true

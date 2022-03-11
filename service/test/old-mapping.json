@@ -1,35 +1,36 @@
 {
-  "mappings" : {
-    "topics": {
-      "properties": {
-        "id": {
-          "type": "string",
-          "index": "not_analyzed"
-        },
-        "apiUrl": {
-          "type": "string",
-          "index": "not_analyzed"
-        },
-        "directType": {
-          "type": "string",
-          "index": "not_analyzed"
-        },
-        "types": {
-          "type": "string",
-          "index": "not_analyzed"
-        },
-        "prefLabel": {
-          "type": "string",
-          "analyzer": "standard"
-        },
-        "aliases": {
-          "type": "string",
-          "analyzer": "standard",
-          "fields": {
-            "raw": {
-              "type": "string",
-              "index": "not_analyzed"
-            }
+  "mappings": {
+    "properties": {
+      "id": {
+        "type": "keyword",
+        "index": false
+      },
+      "type": {
+        "type": "keyword",
+        "index": false
+      },
+      "apiUrl": {
+        "type": "keyword",
+        "index": false
+      },
+      "directType": {
+        "type": "keyword",
+        "index": false
+      },
+      "types": {
+        "type": "keyword",
+        "index": false
+      },
+      "prefLabel": {
+        "type": "text",
+        "analyzer": "standard"
+      },
+      "aliases": {
+        "type": "text",
+        "analyzer": "standard",
+        "fields": {
+          "raw": {
+            "type": "keyword"
           }
         }
       }
