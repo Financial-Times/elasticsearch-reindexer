@@ -12,7 +12,7 @@ import (
 	fthealth "github.com/Financial-Times/go-fthealth/v1_1"
 	log "github.com/Financial-Times/go-logger"
 	"github.com/Financial-Times/service-status-go/gtg"
-	"gopkg.in/olivere/elastic.v5"
+	"github.com/olivere/elastic/v7"
 )
 
 var (

@@ -10,8 +10,8 @@ import (
 	log "github.com/Financial-Times/go-logger"
 	status "github.com/Financial-Times/service-status-go/httphandlers"
 	"github.com/husobee/vestigo"
-	"github.com/jawher/mow.cli"
-	"gopkg.in/olivere/elastic.v5"
+	cli "github.com/jawher/mow.cli"
+	"github.com/olivere/elastic/v7"
 )
 
 func main() {
