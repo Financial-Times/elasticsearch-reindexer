@@ -1,42 +1,65 @@
 package service
 
 import (
+	"fmt"
+	"io"
 	"net/http"
+	"strings"
+	"time"
 
 	log "github.com/Financial-Times/go-logger"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	awsSigner "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/olivere/elastic/v7"
-	awsauth "github.com/smartystreets/go-aws-auth"
 )
 
 type EsAccessConfig struct {
 	esEndpoint     string
 	esTraceLogging bool
 	esAuthType     string
-	accessKey      string
-	secretKey      string
+	esRegion       string
+	awsCreds       *credentials.Credentials
 }
 
-func NewAccessConfig(endpoint string, traceLogging bool, authType string, accessKey string, secretKey string) EsAccessConfig {
-	return EsAccessConfig{accessKey: accessKey, secretKey: secretKey, esEndpoint: endpoint, esAuthType: authType, esTraceLogging: traceLogging}
+func NewAccessConfig(awsCreds *credentials.Credentials, esRegion string, endpoint string, traceLogging bool, authType string) EsAccessConfig {
+	return EsAccessConfig{awsCreds: awsCreds, esRegion: esRegion, esEndpoint: endpoint, esAuthType: authType, esTraceLogging: traceLogging}
 }
 
 type AWSSigningTransport struct {
 	HTTPClient  *http.Client
-	Credentials awsauth.Credentials
+	credentials *credentials.Credentials
+	region      string
 }
 
 // RoundTrip implementation
 func (a AWSSigningTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	return a.HTTPClient.Do(awsauth.Sign4(req, a.Credentials))
+	signer := awsSigner.NewSigner(a.credentials)
+	if req.Body != nil {
+		b, err := io.ReadAll(req.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read request body with error: %w", err)
+		}
+		body := strings.NewReader(string(b))
+		defer req.Body.Close()
+		_, err = signer.Sign(req, body, "es-reindexer", a.region, time.Now())
+		if err != nil {
+			return nil, fmt.Errorf("failed to sign request: %w", err)
+		}
+	} else {
+		_, err := signer.Sign(req, nil, "es-reindexer", a.region, time.Now())
+		if err != nil {
+			return nil, fmt.Errorf("failed to sign request: %w", err)
+		}
+	}
+
+	return a.HTTPClient.Do(req)
 }
 
 func newAmazonClient(config EsAccessConfig) (*elastic.Client, error) {
 	signingTransport := AWSSigningTransport{
-		Credentials: awsauth.Credentials{
-			AccessKeyID:     config.accessKey,
-			SecretAccessKey: config.secretKey,
-		},
-		HTTPClient: http.DefaultClient,
+		credentials: config.awsCreds,
+		region:      config.esRegion,
+		HTTPClient:  http.DefaultClient,
 	}
 	signingClient := &http.Client{Transport: http.RoundTripper(signingTransport)}
 
