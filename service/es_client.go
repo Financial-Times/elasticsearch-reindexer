@@ -34,27 +34,24 @@ type AWSSigningTransport struct {
 // RoundTrip implementation
 func (a AWSSigningTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	signer := awsSigner.NewSigner(a.credentials)
+
+	var body io.ReadSeeker
 	if req.Body != nil {
 		b, err := io.ReadAll(req.Body)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read request body with error: %w", err)
+			return nil, fmt.Errorf("reading request body: %w", err)
 		}
-		body := strings.NewReader(string(b))
+		body = strings.NewReader(string(b))
 		defer req.Body.Close()
-		_, err = signer.Sign(req, body, "es-reindexer", a.region, time.Now())
-		if err != nil {
-			return nil, fmt.Errorf("failed to sign request: %w", err)
-		}
-	} else {
-		_, err := signer.Sign(req, nil, "es-reindexer", a.region, time.Now())
-		if err != nil {
-			return nil, fmt.Errorf("failed to sign request: %w", err)
-		}
+	}
+
+	_, err := signer.Sign(req, body, "es", a.region, time.Now())
+	if err != nil {
+		return nil, fmt.Errorf("signing request: %w", err)
 	}
 
 	return a.HTTPClient.Do(req)
 }
-
 func newAmazonClient(config EsAccessConfig) (*elastic.Client, error) {
 	signingTransport := AWSSigningTransport{
 		credentials: config.awsCreds,
