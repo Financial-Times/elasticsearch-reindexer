@@ -1,10 +1,10 @@
 package service
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	log "github.com/Financial-Times/go-logger"
@@ -14,26 +14,31 @@ import (
 )
 
 type EsAccessConfig struct {
-	esEndpoint     string
-	esTraceLogging bool
-	esAuthType     string
-	esRegion       string
-	awsCreds       *credentials.Credentials
+	endpoint     string
+	region       string
+	authType     string
+	traceLogging bool
+	awsCreds     *credentials.Credentials
 }
 
-func NewAccessConfig(awsCreds *credentials.Credentials, esRegion string, endpoint string, traceLogging bool, authType string) EsAccessConfig {
-	return EsAccessConfig{awsCreds: awsCreds, esRegion: esRegion, esEndpoint: endpoint, esAuthType: authType, esTraceLogging: traceLogging}
+func NewAccessConfig(awsCreds *credentials.Credentials, region, endpoint, authType string, traceLogging bool) EsAccessConfig {
+	return EsAccessConfig{
+		awsCreds:     awsCreds,
+		endpoint:     endpoint,
+		region:       region,
+		authType:     authType,
+		traceLogging: traceLogging,
+	}
 }
 
-type AWSSigningTransport struct {
-	HTTPClient  *http.Client
+type awsSigningTransport struct {
+	httpClient  *http.Client
 	credentials *credentials.Credentials
 	region      string
 }
 
-// RoundTrip implementation
-func (a AWSSigningTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	signer := awsSigner.NewSigner(a.credentials)
+func (t awsSigningTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	signer := awsSigner.NewSigner(t.credentials)
 
 	var body io.ReadSeeker
 	if req.Body != nil {
@@ -41,35 +46,36 @@ func (a AWSSigningTransport) RoundTrip(req *http.Request) (*http.Response, error
 		if err != nil {
 			return nil, fmt.Errorf("reading request body: %w", err)
 		}
-		body = strings.NewReader(string(b))
+		body = bytes.NewReader(b)
 		defer req.Body.Close()
 	}
 
-	_, err := signer.Sign(req, body, "es", a.region, time.Now())
+	_, err := signer.Sign(req, body, "es", t.region, time.Now().UTC())
 	if err != nil {
 		return nil, fmt.Errorf("signing request: %w", err)
 	}
 
-	return a.HTTPClient.Do(req)
+	return t.httpClient.Do(req)
 }
-func newAmazonClient(config EsAccessConfig) (*elastic.Client, error) {
-	signingTransport := AWSSigningTransport{
-		credentials: config.awsCreds,
-		region:      config.esRegion,
-		HTTPClient:  http.DefaultClient,
-	}
-	signingClient := &http.Client{Transport: http.RoundTripper(signingTransport)}
 
-	log.Infof("connecting with AWSSigningTransport to %s", config.esEndpoint)
-	return newClient(config.esEndpoint, config.esTraceLogging,
+func newAmazonClient(config EsAccessConfig) (*elastic.Client, error) {
+	signingTransport := awsSigningTransport{
+		credentials: config.awsCreds,
+		region:      config.region,
+		httpClient:  http.DefaultClient,
+	}
+	signingClient := &http.Client{
+		Transport: signingTransport,
+	}
+
+	return newClient(config.endpoint, config.traceLogging,
 		elastic.SetScheme("https"),
 		elastic.SetHttpClient(signingClient),
 	)
 }
 
 func newSimpleClient(config EsAccessConfig) (*elastic.Client, error) {
-	log.Infof("connecting with default transport to %s", config.esEndpoint)
-	return newClient(config.esEndpoint, config.esTraceLogging)
+	return newClient(config.endpoint, config.traceLogging)
 }
 
 func newClient(endpoint string, traceLogging bool, options ...elastic.ClientOptionFunc) (*elastic.Client, error) {
@@ -87,7 +93,7 @@ func newClient(endpoint string, traceLogging bool, options ...elastic.ClientOpti
 }
 
 func NewElasticClient(config EsAccessConfig) (*elastic.Client, error) {
-	if config.esAuthType == "local" {
+	if config.authType == "local" {
 		return newSimpleClient(config)
 	} else {
 		return newAmazonClient(config)

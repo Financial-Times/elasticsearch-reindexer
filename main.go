@@ -95,17 +95,16 @@ func main() {
 	app.Action = func() {
 		logStartupConfig(port, esEndpoint, esAuth, esIndex, esRegion)
 
-		awsSession, sessionErr := session.NewSession()
-		if sessionErr != nil {
-			log.WithError(sessionErr).Fatal("Failed to initialize AWS session")
+		awsSession, err := session.NewSession()
+		if err != nil {
+			log.WithError(err).Fatal("Failed to initialize AWS session")
 		}
 		credValues, err := awsSession.Config.Credentials.Get()
 		if err != nil {
 			log.WithError(err).Fatal("Failed to obtain AWS credentials values")
 		}
-		awsCreds := awsSession.Config.Credentials
 		log.Infof("Obtaining AWS credentials by using [%s] as provider", credValues.ProviderName)
-		accessConfig := service.NewAccessConfig(awsCreds, *esRegion, *esEndpoint, *esTraceLogging, *esAuth)
+		accessConfig := service.NewAccessConfig(awsSession.Config.Credentials, *esRegion, *esEndpoint, *esAuth, *esTraceLogging)
 
 		// It seems that once we have a connection, we can lose and reconnect to Elastic OK
 		// so just keep going until successful
@@ -115,11 +114,11 @@ func main() {
 			for {
 				ec, err := service.NewElasticClient(accessConfig)
 				if err == nil {
-					log.Infof("connected to ElasticSearch")
+					log.Info("connected to ElasticSearch")
 					ecc <- ec
 					return
 				} else {
-					log.Errorf("could not connect to ElasticSearch: %s", err.Error())
+					log.WithError(err).Error("could not connect to ElasticSearch")
 					time.Sleep(time.Minute)
 				}
 			}
