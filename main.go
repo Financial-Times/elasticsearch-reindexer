@@ -9,6 +9,7 @@ import (
 	fthealth "github.com/Financial-Times/go-fthealth/v1_1"
 	log "github.com/Financial-Times/go-logger"
 	status "github.com/Financial-Times/service-status-go/httphandlers"
+	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/husobee/vestigo"
 	cli "github.com/jawher/mow.cli"
 	"github.com/olivere/elastic/v7"
@@ -22,21 +23,17 @@ func main() {
 		Desc:   "Port to listen on",
 		EnvVar: "PORT",
 	})
-	accessKey := app.String(cli.StringOpt{
-		Name:   "aws-access-key",
-		Desc:   "AWS ACCESS KEY",
-		EnvVar: "AWS_ACCESS_KEY_ID",
-	})
-	secretKey := app.String(cli.StringOpt{
-		Name:   "aws-secret-access-key",
-		Desc:   "AWS SECRET ACCESS KEY",
-		EnvVar: "AWS_SECRET_ACCESS_KEY",
-	})
 	esEndpoint := app.String(cli.StringOpt{
 		Name:   "elasticsearch-endpoint",
 		Value:  "http://localhost:9200",
 		Desc:   "ES endpoint",
 		EnvVar: "ELASTICSEARCH_ENDPOINT",
+	})
+	esRegion := app.String(cli.StringOpt{
+		Name:   "elasticsearch-region",
+		Value:  "eu-west-1",
+		Desc:   "ES region",
+		EnvVar: "ELASTICSEARCH_REGION",
 	})
 	esAuth := app.String(cli.StringOpt{
 		Name:   "auth",
@@ -96,9 +93,18 @@ func main() {
 	log.InitDefaultLogger("elasticsearch-reindexer")
 
 	app.Action = func() {
-		logStartupConfig(port, esEndpoint, esAuth, esIndex)
+		logStartupConfig(port, esEndpoint, esAuth, esIndex, esRegion)
 
-		accessConfig := service.NewAccessConfig(*esEndpoint, *esTraceLogging, *esAuth, *accessKey, *secretKey)
+		awsSession, err := session.NewSession()
+		if err != nil {
+			log.WithError(err).Fatal("Failed to initialize AWS session")
+		}
+		credValues, err := awsSession.Config.Credentials.Get()
+		if err != nil {
+			log.WithError(err).Fatal("Failed to obtain AWS credentials values")
+		}
+		log.Infof("Obtaining AWS credentials by using [%s] as provider", credValues.ProviderName)
+		accessConfig := service.NewAccessConfig(awsSession.Config.Credentials, *esRegion, *esEndpoint, *esAuth, *esTraceLogging)
 
 		// It seems that once we have a connection, we can lose and reconnect to Elastic OK
 		// so just keep going until successful
@@ -108,11 +114,11 @@ func main() {
 			for {
 				ec, err := service.NewElasticClient(accessConfig)
 				if err == nil {
-					log.Infof("connected to ElasticSearch")
+					log.Info("connected to ElasticSearch")
 					ecc <- ec
 					return
 				} else {
-					log.Errorf("could not connect to ElasticSearch: %s", err.Error())
+					log.WithError(err).Error("could not connect to ElasticSearch")
 					time.Sleep(time.Minute)
 				}
 			}
@@ -129,12 +135,13 @@ func main() {
 	}
 }
 
-func logStartupConfig(port, esEndpoint, esAuth, esIndex *string) {
+func logStartupConfig(port, esEndpoint, esAuth, esIndex, esRegion *string) {
 	log.Info("ElasticSearch reindexer uses the following configuration:")
 	log.Infof("port: %v", *port)
 	log.Infof("elasticsearch-endpoint: %v", *esEndpoint)
 	log.Infof("elasticsearch-auth: %v", *esAuth)
 	log.Infof("elasticsearch-index: %v", *esIndex)
+	log.Infof("elasticsearch-region: %v", *esRegion)
 }
 
 func routeRequest(port *string, healthService service.EsHealthService, systemCode string) {
