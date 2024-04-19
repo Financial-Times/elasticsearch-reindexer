@@ -1,6 +1,6 @@
 module github.com/Financial-Times/elasticsearch-reindexer
 
-go 1.19
+go 1.22
 
 require (
 	github.com/Financial-Times/go-fthealth v0.0.0-20181009114238-ca83ad65381f
